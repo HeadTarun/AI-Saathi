@@ -12,8 +12,12 @@ from agents.knowledge_base_agent import kb_agent
 from agents.langgraph_supervisor_agent import langgraph_supervisor_agent
 from agents.langgraph_supervisor_hierarchy_agent import langgraph_supervisor_hierarchy_agent
 from agents.lazy_agent import LazyLoadingAgent
+from agents.planner_agent import planner_agent
+from agents.progress_analyzer_agent import progress_analyzer
+from agents.quiz_agent import quiz_agent
 from agents.rag_assistant import rag_assistant
 from agents.research_assistant import research_assistant
+from agents.teacher_agent import teacher_agent
 from schema import AgentInfo
 
 DEFAULT_AGENT = "research-assistant"
@@ -60,6 +64,22 @@ agents: dict[str, Agent] = {
     "github-mcp-agent": Agent(
         description="A GitHub agent with MCP tools for repository management and development workflows.",
         graph_like=github_mcp_agent,
+    ),
+    "planner-agent": Agent(
+        description="Creates or adjusts AI Study Companion study plans.",
+        graph_like=planner_agent,
+    ),
+    "quiz-agent": Agent(
+        description="Generates and scores AI Study Companion quizzes.",
+        graph_like=quiz_agent,
+    ),
+    "progress-analyzer-agent": Agent(
+        description="Updates quiz performance, weak areas, and replan flags.",
+        graph_like=progress_analyzer,
+    ),
+    "teacher-agent": Agent(
+        description="Teaches a study plan day with grounded RAG content.",
+        graph_like=teacher_agent,
     ),
 }
 

@@ -6,8 +6,21 @@ import uvicorn
 from dotenv import load_dotenv
 
 from core import settings
+from service.service import app
+from src.db import close_pool, get_pool
 
 load_dotenv()
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    await get_pool()
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    await close_pool()
+
 
 if __name__ == "__main__":
     root_logger = logging.getLogger()

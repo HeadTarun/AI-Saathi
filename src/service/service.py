@@ -23,7 +23,10 @@ from langsmith import Client as LangsmithClient
 from langsmith import uuid7
 
 from agents import DEFAULT_AGENT, AgentGraph, get_agent, get_all_agent_info, load_agent
+from api.study_routes import router as study_router
 from core import settings
+from db import close_pool as close_study_pool
+from db import get_pool as get_study_pool
 from memory import initialize_database, initialize_store
 from schema import (
     ChatHistory,
@@ -79,6 +82,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             if hasattr(store, "setup"):  # ignore: union-attr
                 await store.setup()
 
+            try:
+                await get_study_pool()
+            except Exception as e:
+                logger.warning(f"Study Companion DB pool was not warmed at startup: {e}")
+
             # Configure agents with both memory components and async loading
             agents = get_all_agent_info()
             for a in agents:
@@ -94,7 +102,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 agent.checkpointer = saver
                 # Set store for long-term memory (cross-conversation knowledge)
                 agent.store = store
-            yield
+            try:
+                yield
+            finally:
+                await close_study_pool()
     except Exception as e:
         logger.error(f"Error during database/store/agents initialization: {e}")
         raise
@@ -429,3 +440,4 @@ async def health_check():
 
 
 app.include_router(router)
+app.include_router(study_router)
