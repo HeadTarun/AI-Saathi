@@ -1,4 +1,5 @@
 from agents.agents import (
+    AGENTS,
     DEFAULT_AGENT,
     AgentGraph,
     AgentGraphLike,
@@ -11,6 +12,7 @@ __all__ = [
     "get_agent",
     "load_agent",
     "get_all_agent_info",
+    "AGENTS",
     "DEFAULT_AGENT",
     "AgentGraph",
     "AgentGraphLike",

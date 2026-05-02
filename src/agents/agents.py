@@ -35,7 +35,7 @@ class Agent:
     graph_like: AgentGraphLike
 
 
-agents: dict[str, Agent] = {
+AGENTS: dict[str, Agent] = {
     "chatbot": Agent(description="A simple chatbot.", graph_like=chatbot),
     "research-assistant": Agent(
         description="A research assistant with web search and calculator.",
@@ -65,6 +65,22 @@ agents: dict[str, Agent] = {
         description="A GitHub agent with MCP tools for repository management and development workflows.",
         graph_like=github_mcp_agent,
     ),
+    "study-planner": Agent(
+        description="Creates or adjusts AI Study Companion study plans.",
+        graph_like=planner_agent,
+    ),
+    "study-teacher": Agent(
+        description="Teaches a study plan day with grounded RAG content.",
+        graph_like=teacher_agent,
+    ),
+    "study-quiz": Agent(
+        description="Generates and scores AI Study Companion quizzes.",
+        graph_like=quiz_agent,
+    ),
+    "study-progress": Agent(
+        description="Updates quiz performance, weak areas, and replan flags.",
+        graph_like=progress_analyzer,
+    ),
     "planner-agent": Agent(
         description="Creates or adjusts AI Study Companion study plans.",
         graph_like=planner_agent,
@@ -82,6 +98,8 @@ agents: dict[str, Agent] = {
         graph_like=teacher_agent,
     ),
 }
+
+agents = AGENTS
 
 
 async def load_agent(agent_id: str) -> None:

@@ -1,9 +1,11 @@
 import asyncio
+import json
 import os
 import urllib.parse
 import uuid
 from collections.abc import AsyncGenerator
 
+import httpx
 import streamlit as st
 from dotenv import load_dotenv
 from pydantic import ValidationError
@@ -27,6 +29,191 @@ from voice import VoiceManager
 APP_TITLE = "Agent Service Toolkit"
 APP_ICON = "🧰"
 USER_ID_COOKIE = "user_id"
+
+
+def _render_study_companion() -> None:
+    """Minimal Streamlit UI for testing the Study Companion API during development."""
+    base = os.environ.get("STUDY_API_BASE", "http://localhost:8080/study")
+
+    st.title("📚 AI Study Companion — Dev Dashboard")
+
+    tab_plan, tab_teach, tab_quiz, tab_progress = st.tabs(
+        ["📅 Plan", "🎓 Teach", "📝 Quiz", "📊 Progress"]
+    )
+
+    with tab_plan:
+        st.subheader("Create / View Study Plan")
+
+        with st.form("onboard_form"):
+            user_id = st.text_input("User ID (UUID)")
+            exam_id = st.text_input("Exam ID (UUID)")
+            duration = st.slider("Duration (days)", 2, 7, 3)
+            submitted = st.form_submit_button("🚀 Create Plan")
+
+        if submitted and user_id and exam_id:
+            with st.spinner("Planner Agent running..."):
+                response = httpx.post(
+                    f"{base}/onboard",
+                    json={"user_id": user_id, "exam_id": exam_id, "duration_days": duration},
+                    timeout=120,
+                )
+            if response.status_code == 200:
+                data = response.json()
+                st.success(f"✅ Plan created: {data['plan_id']}")
+                st.json(data)
+                st.download_button(
+                    "Download Plan JSON",
+                    data=json.dumps(data, indent=2),
+                    file_name="study_plan.json",
+                    mime="application/json",
+                )
+            else:
+                st.error(f"Error: {response.text}")
+
+        st.divider()
+        view_uid = st.text_input("View plan for User ID:", key="view_uid")
+        if st.button("📋 View Plan") and view_uid:
+            response = httpx.get(f"{base}/plan/{view_uid}", timeout=30)
+            if response.status_code == 200:
+                plan_data = response.json()
+                st.subheader("Study Plan Days")
+                days = plan_data.get("study_plan_days", [])
+                for day in days:
+                    status_emoji = {"taught": "✅", "pending": "⏳", "skipped": "⏭️"}.get(
+                        day["status"], "❓"
+                    )
+                    st.markdown(
+                        f"**Day {day['day_number']}** ({day['scheduled_date']}) — "
+                        f"{day['topic_name']} | {day['allocated_minutes']}min | "
+                        f"{status_emoji} {day['status']}"
+                    )
+            else:
+                st.warning(response.text)
+
+    with tab_teach:
+        st.subheader("Run Teacher Agent")
+        plan_day_id = st.text_input("Plan Day ID (UUID)")
+        teach_uid = st.text_input("User ID (UUID)", key="teach_uid")
+
+        if st.button("🎓 Start Lesson") and plan_day_id and teach_uid:
+            with st.spinner("Teacher Agent generating lesson... (may take 30-60s)"):
+                response = httpx.post(
+                    f"{base}/teach/{plan_day_id}",
+                    params={"user_id": teach_uid},
+                    timeout=180,
+                )
+            if response.status_code == 200:
+                data = response.json()
+                st.success(f"✅ Lesson complete — Log ID: {data['log_id']}")
+                st.subheader(f"📖 {data['topic_name']}")
+                st.markdown(data["lesson_content"])
+            else:
+                st.error(f"Error: {response.text}")
+
+    with tab_quiz:
+        st.subheader("Generate & Submit Quiz")
+
+        with st.form("quiz_generate_form"):
+            quiz_uid = st.text_input("User ID")
+            quiz_topic_id = st.text_input("Topic ID")
+            num_q = st.slider("Number of Questions", 3, 20, 10)
+            diff = st.slider("Difficulty (1-5)", 1, 5, 3)
+            gen_btn = st.form_submit_button("📝 Generate Quiz")
+
+        if gen_btn and quiz_uid and quiz_topic_id:
+            with st.spinner("Quiz Agent generating..."):
+                response = httpx.post(
+                    f"{base}/quiz/generate",
+                    json={
+                        "user_id": quiz_uid,
+                        "topic_id": quiz_topic_id,
+                        "num_questions": num_q,
+                        "difficulty": diff,
+                    },
+                    timeout=120,
+                )
+            if response.status_code == 200:
+                data = response.json()
+                st.session_state["quiz_attempt_id"] = data["attempt_id"]
+                st.session_state["quiz_questions"] = data["questions"]
+                st.session_state["quiz_answers"] = [0] * data["total"]
+                st.success(f"Quiz generated! Attempt ID: {data['attempt_id']}")
+            else:
+                st.error(response.text)
+
+        if "quiz_questions" in st.session_state:
+            st.subheader("Answer the Quiz")
+            answers = []
+            for i, question in enumerate(st.session_state["quiz_questions"]):
+                answer = st.radio(
+                    f"Q{i + 1}: {question['question_text']}",
+                    question["options"],
+                    key=f"q_{i}",
+                )
+                answers.append(question["options"].index(answer))
+
+            time_taken = st.number_input("Time taken (seconds)", min_value=1, value=300)
+
+            if st.button("✅ Submit Quiz"):
+                with st.spinner("Submitting..."):
+                    response = httpx.post(
+                        f"{base}/quiz/{st.session_state['quiz_attempt_id']}/submit",
+                        json={"user_answers": answers, "time_taken_secs": time_taken},
+                        timeout=120,
+                    )
+                if response.status_code == 200:
+                    result = response.json()
+                    st.success(
+                        f"Score: {result['score']}/{result['total']} "
+                        f"({result['accuracy']}%)"
+                    )
+                    st.metric("Updated Accuracy", f"{result['updated_accuracy']}%")
+                    st.metric("Weakness Score", result["new_weakness_score"])
+                    if result["replan_triggered"]:
+                        st.warning("⚠️ Replan triggered! Go to Plan tab and click Replan.")
+                    del st.session_state["quiz_questions"]
+                    del st.session_state["quiz_attempt_id"]
+                else:
+                    st.error(response.text)
+
+    with tab_progress:
+        st.subheader("User Progress Dashboard")
+        prog_uid = st.text_input("User ID", key="prog_uid")
+
+        if st.button("📊 Load Progress") and prog_uid:
+            response = httpx.get(f"{base}/progress/{prog_uid}", timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+
+                st.subheader("🎯 Top Weak Topics")
+                for weakness in data["top_weaknesses"]:
+                    bar_val = weakness["weakness_score"] / 100
+                    st.progress(
+                        bar_val,
+                        text=(
+                            f"{weakness['rank']}. {weakness['topic_name']} — "
+                            f"Score: {weakness['weakness_score']}"
+                        ),
+                    )
+
+                st.subheader("📈 All Topic Stats")
+                import pandas as pd
+
+                df = pd.DataFrame(data["topic_stats"])
+                if not df.empty:
+                    st.dataframe(
+                        df[["topic_name", "attempts", "correct", "accuracy", "weakness_score"]],
+                        use_container_width=True,
+                    )
+
+                if st.button("🔄 Trigger Replan"):
+                    replan_response = httpx.post(f"{base}/replan/{prog_uid}", timeout=120)
+                    if replan_response.status_code == 200:
+                        st.success(f"Replan triggered: {replan_response.json()['message']}")
+                    else:
+                        st.error(replan_response.text)
+            else:
+                st.error(response.text)
 
 
 def get_or_create_user_id() -> str:
@@ -76,6 +263,16 @@ async def main() -> None:
         st.set_option("client.toolbarMode", "minimal")
         await asyncio.sleep(0.1)
         st.rerun()
+
+    mode = st.sidebar.selectbox(
+        "Mode",
+        ["💬 Chat (default)", "📚 Study Companion"],
+        key="app_mode",
+    )
+
+    if mode == "📚 Study Companion":
+        _render_study_companion()
+        st.stop()
 
     # Get or create user ID
     user_id = get_or_create_user_id()
