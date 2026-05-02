@@ -39,15 +39,22 @@ Run Docker-marked integration tests:
 uv run pytest tests/integration -v --run-docker
 ```
 
+Build container images (mirrors CI Docker build):
+
+```bash
+docker build -f docker/Dockerfile.service -t agent-service-toolkit.service:local .
+docker build -f docker/Dockerfile.app -t agent-service-toolkit.app:local .
+```
+
 ## High-level architecture
 
-- The service entrypoint is `src/run_service.py`, which runs Uvicorn for `service:app` (`src/service/service.py`).
-- `src/service/service.py` exposes `/info`, `/invoke`, `/stream` (SSE), `/history`, `/feedback`, and `/health`.
-- Agent selection is registry-driven in `src/agents/agents.py`. `DEFAULT_AGENT` is `"research-assistant"`, and each registered key becomes a route namespace (for example `/{agent_id}/invoke`).
-- At startup, service lifespan wiring initializes memory/checkpoint backends (`src/memory/*`) and attaches them to each loaded agent graph.
-- Backends are selected from settings (`src/core/settings.py`) via `DATABASE_TYPE` (sqlite default, postgres, mongo).
-- Model/provider configuration is centralized in `src/core/settings.py` and `src/core/llm.py`; at least one provider key/config must be present or settings initialization fails.
-- `src/client/client.py` is the canonical API client used by `src/streamlit_app.py` and supports sync/async invoke plus SSE streaming.
+- Runtime entrypoint is `src/run_service.py`, which boots Uvicorn for `service:app` (`src/service/service.py`) and also initializes the Study Companion DB pool on startup/shutdown.
+- `src/service/service.py` is the main HTTP surface for agent orchestration (`/info`, `/{agent_id}/invoke`, `/{agent_id}/stream`, `/history`, `/feedback`, `/health`).
+- Agent routing is registry-driven in `src/agents/agents.py`: each `AGENTS` key becomes a valid path namespace; default fallback is `research-assistant`.
+- FastAPI lifespan wiring in `src/service/service.py` + `src/memory/__init__.py` initializes checkpointer/store backends (SQLite/Postgres/Mongo checkpointer, SQLite/Postgres store) and injects them into each loaded agent graph.
+- LLM/provider and model availability are centralized in `src/core/settings.py` and `src/core/llm.py`; service startup fails if no provider is configured.
+- `src/api/study_routes.py` adds a second API domain under `/study/*` for onboarding, teaching, quiz generation/submission, progress, and replanning, backed by `src/db/connection.py` and `src/db/schema.sql`.
+- `src/client/client.py` is the canonical client for `/info`, invoke/stream/history/feedback; `src/streamlit_app.py` is the main consumer (chat UI + Study Companion dev dashboard).
 
 ## Key conventions in this codebase
 
@@ -57,3 +64,6 @@ uv run pytest tests/integration -v --run-docker
 - **Conversation continuity is config-driven:** `thread_id` and `user_id` are passed through `RunnableConfig.configurable` and are the mechanism for chat continuity/history.
 - **Tests use marker gating for Docker flows:** Docker-dependent tests are marked `@pytest.mark.docker` and are skipped unless `--run-docker` is provided (`tests/conftest.py`).
 - **Default pytest environment includes a fake OpenAI key:** `pyproject.toml` sets `OPENAI_API_KEY=sk-fake-openai-key` for tests; this is relied on by settings validation tests and service tests.
+- **Study onboarding window is constrained in API schema:** `/study/onboard` enforces `duration_days` between 2 and 7 and defaults `start_date` using `Asia/Kolkata` timezone logic.
+- **Quiz responses are intentionally sanitized before returning to UI:** `/study/quiz/generate` strips `correct_index` and explanation fields from generated questions.
+- **Progress/replan flows rely on DB state, not in-memory session state:** `/study/replan/{user_id}` reads `study_plans.meta` flags and only re-schedules remaining `pending` days.
