@@ -1,6 +1,6 @@
 from enum import StrEnum
 from json import loads
-from typing import Annotated, Any
+from typing import Annotated, Any 
 
 from dotenv import find_dotenv
 from pydantic import (
@@ -13,7 +13,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from schema.models import (
+from src.schema.models import (
     AllModelEnum,
     AnthropicModelName,
     AWSModelName,
@@ -134,6 +134,17 @@ class Settings(BaseSettings):
     POSTGRES_APPLICATION_NAME: str = "agent-service-toolkit"
     POSTGRES_MIN_CONNECTIONS_PER_POOL: int = 1
     POSTGRES_MAX_CONNECTIONS_PER_POOL: int = 1
+
+    # --- Database ---
+    postgres_host: str = "postgres"
+    postgres_port: int = 5432
+    postgres_user: str = "studyapp"
+    postgres_password: str = "studypass"
+    postgres_db: str = "study_companion"
+
+    # --- LLM ---
+    groq_api_key: str = ""
+    ollama_base_url: str = "http://localhost:11434"
 
     # MongoDB Configuration
     MONGO_HOST: str | None = None
