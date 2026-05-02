@@ -31,7 +31,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, Field
 
-from src.tools import (
+from tools import (
     fetch_plan_day,
     fetch_teaching_history,
     fetch_weak_areas,

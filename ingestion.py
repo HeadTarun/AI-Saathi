@@ -378,7 +378,7 @@ class OpenAIEmbedder:
 
 class OllamaEmbedder:
     """Uses nomic-embed-text — 768 dims.
-    IMPORTANT: only use this if you change VECTOR(1536) → VECTOR(768) in schema.sql
+    IMPORTANT: only use this if you change the schema to VECTOR(768).
     and re-run the migration.
     """
     DIM = 768
@@ -400,6 +400,40 @@ class OllamaEmbedder:
                 resp.raise_for_status()
                 results.append(resp.json()["embedding"])
         return results
+
+
+class HuggingFaceEmbedder:
+    """
+    Local embedder using sentence-transformers.
+    No API key required. Runs on CPU or GPU.
+
+    Recommended model: BAAI/bge-large-en-v1.5 (1024 dims).
+    Schema must have VECTOR(1024).
+    """
+
+    def __init__(self, model_name: str = "BAAI/bge-large-en-v1.5"):
+        _require("sentence_transformers", "sentence-transformers")
+        from sentence_transformers import SentenceTransformer  # type: ignore
+
+        print(f"  Loading model {model_name} (first run may download it)...")
+        self._model = SentenceTransformer(model_name)
+        self.DIM = self._model.get_sentence_embedding_dimension()
+        print(f"  Model loaded. Embedding dim: {self.DIM}")
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Encode texts without blocking the event loop."""
+        loop = asyncio.get_event_loop()
+
+        def _encode():
+            embeddings = self._model.encode(
+                texts,
+                batch_size=32,
+                show_progress_bar=len(texts) > 10,
+                normalize_embeddings=True,
+            )
+            return embeddings.tolist()
+
+        return await loop.run_in_executor(None, _encode)
 
 
 # ---------------------------------------------------------------------------
@@ -1426,9 +1460,13 @@ async def main(args: argparse.Namespace) -> None:
 
         if args.embedder == "ollama":
             print("  Using Ollama (nomic-embed-text, 768 dims)")
-            print("  ⚠️  Make sure your schema uses VECTOR(768) not VECTOR(1536)")
+            print("  Make sure your schema uses VECTOR(768)")
             base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
             embedder = OllamaEmbedder(base_url)
+        elif args.embedder == "huggingface":
+            model_name = os.environ.get("HF_EMBED_MODEL", "BAAI/bge-large-en-v1.5")
+            print(f"  Using HuggingFace sentence-transformers: {model_name}")
+            embedder = HuggingFaceEmbedder(model_name)
         else:
             api_key = os.environ.get("OPENAI_API_KEY", "")
             if not api_key:
@@ -1492,6 +1530,7 @@ if __name__ == "__main__":
           python ingest_syllabus.py
           python ingest_syllabus.py --reembed
           python ingest_syllabus.py --no-embed
+          python ingest_syllabus.py --embedder huggingface
           python ingest_syllabus.py --embedder ollama
           python ingest_syllabus.py --exam "SSC CGL"
           python ingest_syllabus.py --rebuild-index
@@ -1505,8 +1544,9 @@ if __name__ == "__main__":
                         help="Re-generate embeddings for all topics, even those already embedded")
     parser.add_argument("--no-embed", action="store_true",
                         help="Skip embedding entirely; only populate topics table")
-    parser.add_argument("--embedder", choices=["openai", "ollama"], default="openai",
-                        help="Embedding model to use (default: openai)")
+    parser.add_argument("--embedder", choices=["openai", "ollama", "huggingface"],
+                        default="huggingface",
+                        help="Embedding model to use (default: huggingface)")
     parser.add_argument("--exam", default=None,
                         help='Only ingest topics for this exam, e.g. "SSC CGL"')
     parser.add_argument("--rebuild-index", action="store_true",

@@ -40,6 +40,9 @@ services:
         - path: src/agents/
           action: sync+restart
           target: /app/agents/
+        - path: src/api/
+          action: sync+restart
+          target: /app/api/
         - path: src/schema/
           action: sync+restart
           target: /app/schema/
@@ -49,9 +52,15 @@ services:
         - path: src/core/
           action: sync+restart
           target: /app/core/
+        - path: src/db/
+          action: sync+restart
+          target: /app/db/
         - path: src/memory/
           action: sync+restart
           target: /app/memory/
+        - path: src/tools/
+          action: sync+restart
+          target: /app/tools/
   streamlit_app:
     build:
       context: .

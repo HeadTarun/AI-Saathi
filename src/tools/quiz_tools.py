@@ -11,7 +11,7 @@ import random
 
 from langchain_core.tools import tool
 
-from src.db import get_pool
+from db import get_pool
 
 MANDATORY_TEMPLATE_TYPES = {
     "Puzzles",

@@ -6,39 +6,77 @@ Never let LLM free-generate topic content; always ground via RAG first.
 
 from langchain_core.tools import tool
 
-from src.db import get_pool
+from db import get_pool
 
 
 async def _embed_query(query: str) -> list[float]:
     """
     Generate embedding for a query string.
-    Primary: OpenAI text-embedding-ada-002 (1536 dims)
-    Fallback: Ollama nomic-embed-text (768 dims; only if pgvector index is rebuilt for 768)
 
-    IMPORTANT: The embedding dimension MUST match embedding_vector VECTOR(1536) in schema.
-    If switching to local embeddings, change VECTOR(1536) to VECTOR(768) in schema and rebuild index.
+    Priority order:
+      1. HuggingFace sentence-transformers (local, free, no API key)
+      2. OpenAI text-embedding-ada-002 (paid, 1536 dims)
+      3. Ollama nomic-embed-text (local, 768 dims)
+
+    The query model must match the model used during ingestion.
+    Default: BAAI/bge-large-en-v1.5 (1024 dims; requires VECTOR(1024)).
     """
-    try:
-        import os
+    import os
 
-        from openai import AsyncOpenAI
+    embedder_type = os.environ.get("EMBED_PROVIDER", "huggingface")
 
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-        response = await client.embeddings.create(input=query, model="text-embedding-ada-002")
-        return response.data[0].embedding
-    except Exception:
-        import os
+    if embedder_type == "huggingface":
+        try:
+            import asyncio
 
-        import httpx
+            from sentence_transformers import SentenceTransformer  # type: ignore
 
-        base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{base}/api/embeddings",
-                json={"model": "nomic-embed-text", "prompt": query},
+            model_name = os.environ.get("HF_EMBED_MODEL", "BAAI/bge-large-en-v1.5")
+
+            if (
+                not hasattr(_embed_query, "_hf_model")
+                or _embed_query._hf_model_name != model_name
+            ):
+                _embed_query._hf_model = SentenceTransformer(model_name)
+                _embed_query._hf_model_name = model_name
+
+            model = _embed_query._hf_model
+            loop = asyncio.get_event_loop()
+
+            def _encode():
+                vec = model.encode(
+                    query,
+                    normalize_embeddings=True,
+                )
+                return vec.tolist()
+
+            return await loop.run_in_executor(None, _encode)
+        except ImportError:
+            pass
+
+    if embedder_type in {"openai", "huggingface"}:
+        try:
+            from openai import AsyncOpenAI  # type: ignore
+
+            client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+            response = await client.embeddings.create(
+                input=query,
+                model="text-embedding-ada-002",
             )
-            response.raise_for_status()
-            return response.json()["embedding"]
+            return response.data[0].embedding
+        except Exception:
+            pass
+
+    import httpx  # type: ignore
+
+    base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{base}/api/embeddings",
+            json={"model": "nomic-embed-text", "prompt": query},
+        )
+        response.raise_for_status()
+        return response.json()["embedding"]
 
 
 @tool

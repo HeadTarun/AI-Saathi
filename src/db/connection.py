@@ -7,7 +7,7 @@ from typing import Optional
 
 import asyncpg
 
-from src.core.settings import settings
+from core.settings import settings
 
 _pool: Optional[asyncpg.Pool] = None
 

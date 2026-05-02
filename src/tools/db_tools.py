@@ -10,7 +10,7 @@ from datetime import UTC, date, datetime, timedelta
 
 from langchain_core.tools import tool
 
-from src.db import get_pool
+from db import get_pool
 
 
 @tool

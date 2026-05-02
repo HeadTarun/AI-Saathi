@@ -31,7 +31,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, Field
 
-from src.tools import (
+from tools import (
     fetch_weak_areas,
     generate_quiz_from_template,
     get_quiz_templates,

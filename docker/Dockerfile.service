@@ -11,10 +11,13 @@ RUN pip install --no-cache-dir uv
 RUN uv sync --frozen --no-install-project --no-dev
 
 COPY src/agents/ ./agents/
+COPY src/api/ ./api/
 COPY src/core/ ./core/
+COPY src/db/ ./db/
 COPY src/memory/ ./memory/
 COPY src/schema/ ./schema/
 COPY src/service/ ./service/
+COPY src/tools/ ./tools/
 COPY src/run_service.py .
 
 CMD ["python", "run_service.py"]

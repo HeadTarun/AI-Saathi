@@ -14,11 +14,11 @@ from fastapi import APIRouter, HTTPException
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
-from src.agents.planner_agent import planner_agent
-from src.agents.progress_analyzer_agent import run_progress_analysis
-from src.agents.quiz_agent import quiz_agent
-from src.agents.teacher_agent import teacher_agent
-from src.db import get_pool
+from agents.planner_agent import planner_agent
+from agents.progress_analyzer_agent import run_progress_analysis
+from agents.quiz_agent import quiz_agent
+from agents.teacher_agent import teacher_agent
+from db import get_pool
 
 router = APIRouter(prefix="/study", tags=["Study Companion"])
 

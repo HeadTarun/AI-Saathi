@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS syllabus_topics (
     priority         VARCHAR(10) NOT NULL CHECK (priority IN ('HIGH','MED','LOW')),
     estimated_hours  NUMERIC(4,1) NOT NULL,
     prerequisite_ids UUID[] DEFAULT '{}',               -- soft refs for ordering
-    embedding_vector vector(1536),                      -- pgvector - for RAG
+    embedding_vector vector(1024),                      -- pgvector - for RAG
     template_ids     UUID[] DEFAULT '{}',               -- -> quiz_templates
     created_at       TIMESTAMPTZ DEFAULT now()
 );

@@ -6,8 +6,8 @@ import uvicorn
 from dotenv import load_dotenv
 
 from core import settings
+from db import close_pool, get_pool
 from service.service import app
-from src.db import close_pool, get_pool
 
 load_dotenv()
 
