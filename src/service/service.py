@@ -32,6 +32,11 @@ def _cors_origins() -> list[str]:
     return sorted(set(origins))
 
 
+def _cors_origin_regex() -> str | None:
+    configured = os.environ.get("BACKEND_CORS_ORIGIN_REGEX", "").strip()
+    return configured or None
+
+
 app = FastAPI(
     title="AI Study Companion",
     description="Local MVP for adaptive study planning, teaching, quizzes, and progress.",
@@ -40,6 +45,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
+    allow_origin_regex=_cors_origin_regex(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
