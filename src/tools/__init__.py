@@ -11,13 +11,16 @@ from .db_tools import (
     get_user_profile,
     mark_day_taught,
     refresh_weak_areas,
+    run_planner_workflow,
     store_quiz_attempt,
     store_teaching_log,
     submit_quiz_attempt,
+    update_study_plan_from_progress,
     update_user_performance,
 )
 from .quiz_tools import generate_quiz_from_template, get_quiz_templates
 from .rag_tools import rag_retrieve_content
+from .external_knowledge_tools import retrieve_aptitude_reasoning_knowledge
 
 __all__ = [
     "get_user_profile",
@@ -36,7 +39,10 @@ __all__ = [
     "compute_topic_order",
     "create_study_plan",
     "create_plan_days",
+    "run_planner_workflow",
+    "update_study_plan_from_progress",
     "rag_retrieve_content",
+    "retrieve_aptitude_reasoning_knowledge",
     "get_quiz_templates",
     "generate_quiz_from_template",
 ]

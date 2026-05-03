@@ -1,3 +1,4 @@
-from .connection import close_pool, get_conn, get_pool
+from .connection import get_supabase
 
-__all__ = ["get_pool", "close_pool", "get_conn"]
+__all__ = ["get_supabase"]
+

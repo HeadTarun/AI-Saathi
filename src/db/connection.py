@@ -1,42 +1,23 @@
-"""
-Async PostgreSQL connection pool for all tool functions.
-Uses asyncpg. Singleton pool created at FastAPI startup.
-"""
+from __future__ import annotations
 
-from typing import Optional
+import os
+from functools import lru_cache
 
-import asyncpg
-
-from core.settings import settings
-
-_pool: Optional[asyncpg.Pool] = None
+from dotenv import load_dotenv
+from supabase import Client, create_client
 
 
-async def get_pool() -> asyncpg.Pool:
-    """Return the global connection pool. Creates it on first call."""
-    global _pool
-    if _pool is None:
-        _pool = await asyncpg.create_pool(
-            host=settings.postgres_host,
-            port=settings.postgres_port,
-            user=settings.postgres_user,
-            password=settings.postgres_password,
-            database=settings.postgres_db,
-            min_size=2,
-            max_size=10,
-        )
-    return _pool
+load_dotenv()
 
 
-async def close_pool() -> None:
-    """Call on FastAPI shutdown."""
-    global _pool
-    if _pool:
-        await _pool.close()
-        _pool = None
+@lru_cache(maxsize=1)
+def get_supabase() -> Client:
+    url = os.environ.get("SUPABASE_URL", "").strip()
+    key = (
+        os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+        or os.environ.get("SUPABASE_ANON_KEY", "").strip()
+    )
+    if not url or not key:
+        raise RuntimeError("SUPABASE_URL and SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY are required")
+    return create_client(url, key)
 
-
-async def get_conn() -> asyncpg.Connection:
-    """Context-manager helper for single queries."""
-    pool = await get_pool()
-    return pool.acquire()

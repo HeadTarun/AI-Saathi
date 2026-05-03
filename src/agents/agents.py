@@ -1,69 +1,32 @@
-from dataclasses import dataclass
-
-from langgraph.graph.state import CompiledStateGraph
-from langgraph.pregel import Pregel
-
-from agents.bg_task_agent.bg_task_agent import bg_task_agent
-from agents.chatbot import chatbot
-from agents.command_agent import command_agent
-from agents.github_mcp_agent.github_mcp_agent import github_mcp_agent
-from agents.interrupt_agent import interrupt_agent
-from agents.knowledge_base_agent import kb_agent
-from agents.langgraph_supervisor_agent import langgraph_supervisor_agent
-from agents.langgraph_supervisor_hierarchy_agent import langgraph_supervisor_hierarchy_agent
-from agents.lazy_agent import LazyLoadingAgent
+from agents.local_agents import BaseLocalAgent, RouterAgent, run_agent_task
 from agents.planner_agent import planner_agent
 from agents.progress_analyzer_agent import progress_analyzer
 from agents.quiz_agent import quiz_agent
-from agents.rag_assistant import rag_assistant
-from agents.research_assistant import research_assistant
 from agents.teacher_agent import teacher_agent
-from schema import AgentInfo
+from schema.schema import AgentInfo
 
-DEFAULT_AGENT = "research-assistant"
-
-# Type alias to handle LangGraph's different agent patterns
-# - @entrypoint functions return Pregel
-# - StateGraph().compile() returns CompiledStateGraph
-AgentGraph = CompiledStateGraph | Pregel  # What get_agent() returns (always loaded)
-AgentGraphLike = CompiledStateGraph | Pregel | LazyLoadingAgent  # What can be stored in registry
+DEFAULT_AGENT = "study-router"
 
 
-@dataclass
 class Agent:
-    description: str
-    graph_like: AgentGraphLike
+    def __init__(self, description: str, graph_like: BaseLocalAgent) -> None:
+        self.description = description
+        self.graph_like = graph_like
 
+
+router_agent = RouterAgent(
+    {
+        "study-planner": planner_agent,
+        "study-teacher": teacher_agent,
+        "study-quiz": quiz_agent,
+        "study-progress": progress_analyzer,
+    }
+)
 
 AGENTS: dict[str, Agent] = {
-    "chatbot": Agent(description="A simple chatbot.", graph_like=chatbot),
-    "research-assistant": Agent(
-        description="A research assistant with web search and calculator.",
-        graph_like=research_assistant,
-    ),
-    "rag-assistant": Agent(
-        description="A RAG assistant with access to information in a database.",
-        graph_like=rag_assistant,
-    ),
-    "command-agent": Agent(description="A command agent.", graph_like=command_agent),
-    "bg-task-agent": Agent(description="A background task agent.", graph_like=bg_task_agent),
-    "langgraph-supervisor-agent": Agent(
-        description="A langgraph supervisor agent", graph_like=langgraph_supervisor_agent
-    ),
-    "langgraph-supervisor-hierarchy-agent": Agent(
-        description="A langgraph supervisor agent with a nested hierarchy of agents",
-        graph_like=langgraph_supervisor_hierarchy_agent,
-    ),
-    "interrupt-agent": Agent(
-        description="An agent the uses interrupts.", graph_like=interrupt_agent
-    ),
-    "knowledge-base-agent": Agent(
-        description="A retrieval-augmented generation agent using Amazon Bedrock Knowledge Base",
-        graph_like=kb_agent,
-    ),
-    "github-mcp-agent": Agent(
-        description="A GitHub agent with MCP tools for repository management and development workflows.",
-        graph_like=github_mcp_agent,
+    "study-router": Agent(
+        description="Routes all study requests to the appropriate task agent.",
+        graph_like=router_agent,
     ),
     "study-planner": Agent(
         description="Creates or adjusts AI Study Companion study plans.",
@@ -81,49 +44,16 @@ AGENTS: dict[str, Agent] = {
         description="Updates quiz performance, weak areas, and replan flags.",
         graph_like=progress_analyzer,
     ),
-    "planner-agent": Agent(
-        description="Creates or adjusts AI Study Companion study plans.",
-        graph_like=planner_agent,
-    ),
-    "quiz-agent": Agent(
-        description="Generates and scores AI Study Companion quizzes.",
-        graph_like=quiz_agent,
-    ),
-    "progress-analyzer-agent": Agent(
-        description="Updates quiz performance, weak areas, and replan flags.",
-        graph_like=progress_analyzer,
-    ),
-    "teacher-agent": Agent(
-        description="Teaches a study plan day with grounded RAG content.",
-        graph_like=teacher_agent,
-    ),
 }
-
-agents = AGENTS
-
-
-async def load_agent(agent_id: str) -> None:
-    """Load lazy agents if needed."""
-    graph_like = agents[agent_id].graph_like
-    if isinstance(graph_like, LazyLoadingAgent):
-        await graph_like.load()
-
-
-def get_agent(agent_id: str) -> AgentGraph:
-    """Get an agent graph, loading lazy agents if needed."""
-    agent_graph = agents[agent_id].graph_like
-
-    # If it's a lazy loading agent, ensure it's loaded and return its graph
-    if isinstance(agent_graph, LazyLoadingAgent):
-        if not agent_graph._loaded:
-            raise RuntimeError(f"Agent {agent_id} not loaded. Call load() first.")
-        return agent_graph.get_graph()
-
-    # Otherwise return the graph directly
-    return agent_graph
 
 
 def get_all_agent_info() -> list[AgentInfo]:
     return [
-        AgentInfo(key=agent_id, description=agent.description) for agent_id, agent in agents.items()
+        AgentInfo(key=agent_id, description=agent.description)
+        for agent_id, agent in AGENTS.items()
     ]
+
+
+def run_study_task(task: str, **payload):
+    return run_agent_task(router_agent, task, **payload)
+

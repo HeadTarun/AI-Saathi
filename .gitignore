@@ -11,6 +11,23 @@ checkpoints.db-*
 .DS_Store
 *.code-workspace
 
+# Node / Next.js
+node_modules/
+.next/
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/.git-nested-backup/
+frontend/frontend/
+*.tsbuildinfo
+
+# Local logs and generated archives
+*.log
+dev.out.log
+dev.err.log
+frontend.dev.log
+src.zip
+
 # cursor
 .cursorindexingignore
 .specstory/
@@ -140,6 +157,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
+.env.*.local
 .python-version
 .venv
 env/

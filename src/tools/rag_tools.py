@@ -1,142 +1,83 @@
-"""
-RAG retrieval tool using pgvector cosine similarity.
-Teacher Agent uses this to get grounded concept explanations.
-Never let LLM free-generate topic content; always ground via RAG first.
-"""
+from __future__ import annotations
 
 from langchain_core.tools import tool
+from sentence_transformers import SentenceTransformer
 
-from db import get_pool
+from db import get_supabase
 
 
-async def _embed_query(query: str) -> list[float]:
-    """
-    Generate embedding for a query string.
+MODEL_NAME = "BAAI/bge-small-en-v1.5"
+_model: SentenceTransformer | None = None
 
-    Priority order:
-      1. HuggingFace sentence-transformers (local, free, no API key)
-      2. OpenAI text-embedding-ada-002 (paid, 1536 dims)
-      3. Ollama nomic-embed-text (local, 768 dims)
 
-    The query model must match the model used during ingestion.
-    Default: BAAI/bge-large-en-v1.5 (1024 dims; requires VECTOR(1024)).
-    """
-    import os
+def _model_instance() -> SentenceTransformer:
+    global _model
+    if _model is None:
+        _model = SentenceTransformer(MODEL_NAME)
+    return _model
 
-    embedder_type = os.environ.get("EMBED_PROVIDER", "huggingface")
 
-    if embedder_type == "huggingface":
-        try:
-            import asyncio
+def _embed_query(query: str) -> list[float]:
+    return _model_instance().encode(query, normalize_embeddings=True).tolist()
 
-            from sentence_transformers import SentenceTransformer  # type: ignore
 
-            model_name = os.environ.get("HF_EMBED_MODEL", "BAAI/bge-large-en-v1.5")
-
-            if (
-                not hasattr(_embed_query, "_hf_model")
-                or _embed_query._hf_model_name != model_name
-            ):
-                _embed_query._hf_model = SentenceTransformer(model_name)
-                _embed_query._hf_model_name = model_name
-
-            model = _embed_query._hf_model
-            loop = asyncio.get_event_loop()
-
-            def _encode():
-                vec = model.encode(
-                    query,
-                    normalize_embeddings=True,
-                )
-                return vec.tolist()
-
-            return await loop.run_in_executor(None, _encode)
-        except ImportError:
-            pass
-
-    if embedder_type in {"openai", "huggingface"}:
-        try:
-            from openai import AsyncOpenAI  # type: ignore
-
-            client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-            response = await client.embeddings.create(
-                input=query,
-                model="text-embedding-ada-002",
-            )
-            return response.data[0].embedding
-        except Exception:
-            pass
-
-    import httpx  # type: ignore
-
-    base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{base}/api/embeddings",
-            json={"model": "nomic-embed-text", "prompt": query},
-        )
-        response.raise_for_status()
-        return response.json()["embedding"]
+def _topic_fallback(query: str, topic_id: str, top_k: int) -> list[dict]:
+    if not topic_id:
+        return []
+    row = (
+        get_supabase()
+        .table("syllabus_topics")
+        .select("topic_name,subtopics")
+        .eq("id", topic_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not row:
+        return []
+    topic = row[0]
+    subtopics = topic.get("subtopics") or []
+    chunk = f"{topic['topic_name']}: {', '.join(subtopics) if subtopics else query}"
+    return [
+        {
+            "chunk_text": chunk,
+            "similarity_score": 1.0,
+            "document_id": None,
+            "metadata": {"source": "syllabus_topics", "topic_id": topic_id},
+        }
+    ][:top_k]
 
 
 @tool
-async def rag_retrieve_content(query: str, topic_id: str, top_k: int = 3) -> list[dict]:
-    """
-    Retrieve grounded concept chunks from the syllabus vector index.
-    Teacher Agent MUST call this before generating any lesson content.
-    Results are ordered by cosine similarity (most relevant first).
-
-    Args:
-        query: Natural language query e.g. "explain percentage calculation basics"
-        topic_id: UUID string; restricts search to this topic's subtopics
-        top_k: Number of chunks to return (default 3)
-
-    Returns:
-        List of dicts: [{ chunk_text: str, similarity_score: float }]
-        Returns empty list if no embeddings exist yet for this topic.
-    """
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        has_embedding = await conn.fetchval(
-            """
-            SELECT EXISTS(
-                SELECT 1
-                FROM syllabus_topics
-                WHERE id = $1::uuid AND embedding_vector IS NOT NULL
-            )
-            """,
-            topic_id,
-        )
-        if not has_embedding:
-            row = await conn.fetchrow(
-                """
-                SELECT topic_name, subtopics
-                FROM syllabus_topics
-                WHERE id = $1::uuid
-                """,
-                topic_id,
-            )
-            if not row:
-                return []
-            return [
+async def rag_retrieve_content(query: str, topic_id: str = "", top_k: int = 5) -> list[dict]:
+    """Retrieve PDF RAG chunks from Supabase using Hugging Face embeddings."""
+    try:
+        rows = (
+            get_supabase()
+            .rpc(
+                "match_rag_chunks",
                 {
-                    "chunk_text": f"{row['topic_name']}: {', '.join(row['subtopics'])}",
-                    "similarity_score": 1.0,
-                }
-            ]
-
-        embedding = await _embed_query(query)
-        rows = await conn.fetch(
-            """
-            SELECT topic_name || ': ' || array_to_string(subtopics, ', ') AS chunk_text,
-                   1 - (embedding_vector <=> $1::vector) AS similarity_score
-            FROM syllabus_topics
-            WHERE id = $2::uuid AND embedding_vector IS NOT NULL
-            ORDER BY embedding_vector <=> $1::vector
-            LIMIT $3
-            """,
-            embedding,
-            topic_id,
-            top_k,
+                    "query_embedding": _embed_query(query),
+                    "match_count": top_k,
+                },
+            )
+            .execute()
+            .data
+            or []
         )
-    return [dict(row) for row in rows]
+    except Exception:
+        rows = []
+
+    if not rows:
+        return _topic_fallback(query, topic_id, top_k)
+
+    return [
+        {
+            "chunk_text": row["content"],
+            "similarity_score": row["similarity"],
+            "document_id": row["document_id"],
+            "metadata": row.get("metadata") or {},
+        }
+        for row in rows
+    ]
+
