@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  createCustomRagPlan,
   getLearnerProfile,
   LearnerLevel,
   listStudyGoals,
@@ -26,6 +27,7 @@ export default function PlanPage() {
   const [userId, setUserId] = useState("");
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
+  const [customLoading, setCustomLoading] = useState(false);
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState("");
 
@@ -133,6 +135,52 @@ export default function PlanPage() {
     setExam(FOUNDATION_EXAM_ID);
     setUserGoal((current) => current.trim() || FOUNDATION_GOAL);
     await createPlan(FOUNDATION_EXAM_ID, userGoal.trim() || FOUNDATION_GOAL);
+  }
+
+  async function handleCustomRagPlan() {
+    setError("");
+
+    if (!userId) {
+      setError("Sign in before generating a custom RAG plan.");
+      return;
+    }
+
+    const trimmedGoal = userGoal.trim();
+    if (!trimmedGoal) {
+      setError("Tell the custom planner your goal before generating a plan.");
+      return;
+    }
+
+    const days = Math.max(2, Math.min(7, Number(durationDays) || 5));
+    setCustomLoading(true);
+
+    try {
+      saveLearnerProfile({
+        userId,
+        name,
+        email,
+        exam: "custom-rag",
+        level,
+        durationDays: days,
+        userGoal: trimmedGoal,
+      });
+
+      await createCustomRagPlan({
+        user_id: userId,
+        exam_id: "custom-rag",
+        duration_days: days,
+        name,
+        email,
+        level,
+        user_goal: trimmedGoal,
+      });
+
+      window.location.href = "/dashboard";
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Custom RAG planner could not generate your study plan.");
+    } finally {
+      setCustomLoading(false);
+    }
   }
 
   return (
@@ -262,8 +310,17 @@ export default function PlanPage() {
               <button
                 className="quiz-secondary-button"
                 type="button"
+                onClick={handleCustomRagPlan}
+                disabled={loading || customLoading || booting}
+                style={{ width: "100%", marginTop: "0.75rem" }}
+              >
+                {customLoading ? "Building custom RAG plan..." : "Generate Custom RAG Plan"}
+              </button>
+              <button
+                className="quiz-secondary-button"
+                type="button"
                 onClick={handleFoundationPlan}
-                disabled={loading || booting}
+                disabled={loading || customLoading || booting}
                 style={{ width: "100%", marginTop: "0.75rem" }}
               >
                 Create Aptitude + Reasoning Plan

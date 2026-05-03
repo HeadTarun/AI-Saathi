@@ -57,7 +57,9 @@ class BaseLocalAgent:
 
 class PlannerAgent(BaseLocalAgent):
     name = "study-planner"
-    supported_tasks = frozenset({"build_plan", "get_plan", "get_profile", "list_topics", "list_exams", "replan"})
+    supported_tasks = frozenset(
+        {"build_plan", "build_custom_rag_plan", "get_plan", "get_profile", "list_topics", "list_exams", "replan"}
+    )
 
     def process(self, payload: dict[str, Any], task: str | None = None) -> dict[str, Any]:
         if task == "build_plan":
@@ -81,6 +83,29 @@ class PlannerAgent(BaseLocalAgent):
                 "workflow": result["workflow"],
                 "message": (
                     f"Plan created: plan_id={plan['plan_id']}, "
+                    f"{plan['duration_days']} days starting {plan['start_date']}"
+                ),
+            }
+        if task == "build_custom_rag_plan":
+            result = study_core.run_custom_rag_plan_workflow(
+                user_id=_required(payload, "user_id"),
+                duration_days=int(_required(payload, "duration_days", "duration")),
+                start_date=payload.get("start_date"),
+                name=str(payload.get("name") or "Learner"),
+                level=str(payload.get("level") or "beginner"),
+                email=str(payload.get("email") or "").strip() or None,
+                user_goal=str(payload.get("user_goal") or "").strip() or None,
+            )
+            plan = result["plan"]
+            return {
+                "plan": plan,
+                "plan_id": plan["plan_id"],
+                "start_date": plan["start_date"],
+                "end_date": plan["end_date"],
+                "duration_days": plan["duration_days"],
+                "workflow": result["workflow"],
+                "message": (
+                    f"Custom RAG plan created: plan_id={plan['plan_id']}, "
                     f"{plan['duration_days']} days starting {plan['start_date']}"
                 ),
             }

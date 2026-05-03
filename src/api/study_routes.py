@@ -134,6 +134,29 @@ async def onboard_user(req: OnboardRequest) -> OnboardResponse:
     )
 
 
+@router.post("/custom-plan", response_model=OnboardResponse)
+async def create_custom_rag_plan(req: OnboardRequest) -> OnboardResponse:
+    result = run_study_task(
+        "build_custom_rag_plan",
+        user_id=req.user_id,
+        duration_days=req.duration_days,
+        start_date=req.start_date,
+        name=req.name,
+        email=req.email,
+        level=req.level,
+        user_goal=req.user_goal,
+    )
+    plan = result["plan"]
+    return OnboardResponse(
+        plan_id=plan["plan_id"],
+        start_date=plan["start_date"],
+        end_date=plan["end_date"],
+        duration_days=plan["duration_days"],
+        message=result.get("message")
+        or f"Custom RAG plan created: plan_id={plan['plan_id']}, {plan['duration_days']} days starting {plan['start_date']}",
+    )
+
+
 @router.get("/plan/{user_id}")
 async def get_user_plan(user_id: str) -> dict[str, Any]:
     try:

@@ -338,47 +338,87 @@ input {
 
 .pixel-computer {
   position: relative;
-  width: 94px;
+  width: 112px;
   height: 96px;
-  filter: drop-shadow(4px 4px 0 #000a20);
+  flex: 0 0 112px;
+  filter: drop-shadow(3px 3px 0 #000a20);
 }
 
 .monitor {
   position: absolute;
-  top: 8px;
-  left: 12px;
-  width: 70px;
-  height: 58px;
-  background: #c9c5c3;
+  top: 0;
+  left: 13px;
+  width: 82px;
+  height: 62px;
+  background: #d7d2cf;
   border: 4px solid #2d2b35;
   box-shadow:
-    inset 12px 0 0 #ede8e2,
-    inset -9px -7px 0 #8e8c91;
+    inset 8px 0 0 #f4eee8,
+    inset -8px -7px 0 #8d8a91;
 }
 
 .face {
   position: absolute;
-  top: 27px;
-  left: 50px;
-  width: 26px;
-  height: 23px;
-  background: #75dfff;
-  border: 3px solid #24506b;
+  top: 13px;
+  left: 30px;
+  width: 50px;
+  height: 34px;
+  background: #70ddff;
+  border: 4px solid #24506b;
   box-shadow:
-    inset -4px -4px 0 #2ca4d2,
-    -10px 11px 0 -8px #24506b,
-    5px 10px 0 -8px #24506b;
+    inset 4px 4px 0 #bdf5ff,
+    inset -6px -6px 0 #2298c6;
+}
+
+.face::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -13px;
+  height: 6px;
+  background: #4b4a52;
+  border-left: 4px solid #2d2b35;
+  border-right: 4px solid #2d2b35;
 }
 
 .base {
   position: absolute;
-  right: 10px;
-  bottom: 8px;
-  width: 68px;
-  height: 24px;
-  background: #b6b2b0;
+  left: 0;
+  bottom: 0;
+  width: 104px;
+  height: 30px;
+  background: #c9c4c1;
   border: 4px solid #2d2b35;
-  box-shadow: inset -10px -5px 0 #7e7b82;
+  box-shadow:
+    inset 7px 6px 0 #eee8e2,
+    inset -8px -6px 0 #75737b;
+}
+
+.base::before {
+  content: "";
+  position: absolute;
+  left: 22px;
+  top: -16px;
+  width: 40px;
+  height: 16px;
+  background: #aaa5a3;
+  border-left: 4px solid #2d2b35;
+  border-right: 4px solid #2d2b35;
+  box-shadow: inset -5px 0 0 #77757d;
+}
+
+.base::after {
+  content: "";
+  position: absolute;
+  left: 13px;
+  right: 13px;
+  bottom: 7px;
+  height: 8px;
+  background: #4f4d56;
+  box-shadow:
+    0 -5px 0 #dad5d2,
+    inset 0 -3px 0 #2d2b35;
 }
 
 .speech-bubble {
@@ -3202,8 +3242,8 @@ select:focus {
 
 .lp-pixel-pc {
   position: relative;
-  width: 82px;
-  height: 84px;
+  width: 112px;
+  height: 96px;
   filter: drop-shadow(3px 3px 0 #000a20);
   flex-shrink: 0;
 }

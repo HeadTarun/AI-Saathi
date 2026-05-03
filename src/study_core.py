@@ -5,6 +5,7 @@ import re
 import urllib.error
 import urllib.request
 import uuid
+from collections import Counter
 from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from typing import Any
@@ -456,6 +457,300 @@ def _document_chunks(document_id: str, query: str | None = None, limit: int = 3)
     )
 
 
+def _all_resource_bundle(user_goal: str = "") -> dict[str, Any]:
+    sync_rag_study_sources()
+    ensure_external_foundation_source()
+    exams = _data(_table("exams").select("*").eq("is_active", True).execute())
+    topics = _data(_table("syllabus_topics").select("*").execute())
+    docs = _rag_documents()
+    chunks = []
+    for doc in docs:
+        for chunk in _document_chunks(doc["id"], user_goal, limit=8):
+            chunks.append({**chunk, "document": doc})
+    return {
+        "exams": exams,
+        "topics": topics,
+        "documents": docs,
+        "chunks": chunks,
+    }
+
+
+def _keywords(text: str) -> list[str]:
+    stopwords = {
+        "about",
+        "after",
+        "again",
+        "also",
+        "and",
+        "are",
+        "basic",
+        "before",
+        "build",
+        "clear",
+        "concept",
+        "from",
+        "goal",
+        "have",
+        "into",
+        "learn",
+        "plan",
+        "practice",
+        "prepare",
+        "ready",
+        "revise",
+        "study",
+        "that",
+        "the",
+        "this",
+        "topic",
+        "weak",
+        "with",
+    }
+    words = [
+        word.lower()
+        for word in re.findall(r"[A-Za-z][A-Za-z0-9&+-]{2,}", text or "")
+        if word.lower() not in stopwords
+    ]
+    return words
+
+
+def _chunk_title(chunk: dict[str, Any], fallback: str) -> str:
+    metadata = chunk.get("metadata") or {}
+    for key in ("topic", "title", "heading", "section", "chapter"):
+        value = metadata.get(key)
+        if value:
+            return str(value).strip()[:80]
+    content = " ".join(str(chunk.get("content") or "").split())
+    phrases = re.findall(r"\b[A-Z][A-Za-z0-9&+-]*(?:\s+[A-Z][A-Za-z0-9&+-]*){0,4}", content)
+    return (phrases[0] if phrases else fallback).strip()[:80]
+
+
+def _custom_topic_specs(resources: dict[str, Any], duration_days: int, user_goal: str) -> list[dict[str, Any]]:
+    goal_words = set(_keywords(user_goal))
+    chunk_groups: dict[str, dict[str, Any]] = {}
+    for index, chunk in enumerate(resources["chunks"], start=1):
+        title = _chunk_title(chunk, f"Resource Focus {index}")
+        content = str(chunk.get("content") or "")
+        words = _keywords(f"{title} {content}")
+        overlap = len(goal_words.intersection(words)) if goal_words else 0
+        score = overlap * 5 + min(8, len(words) // 40) + (3 if title != f"Resource Focus {index}" else 0)
+        key = _slug(title)
+        group = chunk_groups.setdefault(
+            key,
+            {
+                "name": title,
+                "subject": "Custom RAG Study",
+                "priority": "HIGH" if overlap else "MED",
+                "difficulty": 3,
+                "hours": 2.5,
+                "score": 0,
+                "chunks": [],
+                "keywords": Counter(),
+                "source_document_ids": set(),
+            },
+        )
+        group["score"] += score
+        group["chunks"].append(chunk)
+        group["keywords"].update(words[:40])
+        if chunk.get("document_id"):
+            group["source_document_ids"].add(chunk["document_id"])
+
+    specs = sorted(chunk_groups.values(), key=lambda item: (-item["score"], item["name"]))
+    if len(specs) < duration_days:
+        for topic in resources["topics"]:
+            text = " ".join(
+                [
+                    str(topic.get("topic_name") or ""),
+                    str(topic.get("subject") or ""),
+                    " ".join(topic.get("subtopics") or []),
+                ]
+            )
+            words = _keywords(text)
+            overlap = len(goal_words.intersection(words)) if goal_words else 0
+            specs.append(
+                {
+                    "name": topic.get("topic_name") or topic["id"],
+                    "subject": topic.get("subject") or "Supabase Syllabus",
+                    "priority": topic.get("priority") or ("HIGH" if overlap else "MED"),
+                    "difficulty": int(topic.get("difficulty") or 3),
+                    "hours": float(topic.get("estimated_hours") or 2.0),
+                    "score": overlap * 5 + _priority_rank(topic.get("priority") or "MED"),
+                    "chunks": [],
+                    "keywords": Counter(words),
+                    "source_document_ids": set(),
+                }
+            )
+
+    selected = specs[: max(duration_days, min(12, duration_days * 2))]
+    if not selected:
+        raise ValueError("No Supabase RAG resources or syllabus topics are ready for a custom plan.")
+    return selected
+
+
+def _custom_lesson_material(topic: dict[str, Any], spec: dict[str, Any], user_goal: str) -> dict[str, Any]:
+    chunks = spec.get("chunks") or []
+    excerpt = _summarize_chunk(" ".join(str(chunk.get("content") or "") for chunk in chunks), max_len=900)
+    top_terms = [term for term, _count in (spec.get("keywords") or Counter()).most_common(5)]
+    focus = ", ".join(top_terms[:4]) or topic["topic_name"].lower()
+    explanation = (
+        excerpt
+        or f"This custom topic was selected from your Supabase syllabus resources for: {user_goal or topic['topic_name']}."
+    )
+    return {
+        "id": f"lesson-{topic['id']}",
+        "topic_id": topic["id"],
+        "simple_explanation": explanation,
+        "concept_points": [
+            f"Connect this lesson to your goal: {user_goal or 'finish the current study run'}.",
+            f"Focus keywords from Supabase resources: {focus}.",
+            "Use the saved source material before moving to timed practice.",
+        ],
+        "worked_example": excerpt or f"Create a short worked example for {topic['topic_name']} from the matched source material.",
+        "common_mistakes": [
+            "Jumping to practice before reading the matched resource.",
+            "Treating a repeated keyword as mastery without solving examples.",
+            "Skipping revision from the previous custom-plan day.",
+        ],
+        "quick_trick": "Turn the source excerpt into a three-step note: rule, example, check.",
+        "practice_prompt": f"Practice one easy and one timed question for {topic['topic_name']}.",
+        "recap": f"{topic['topic_name']} was chosen because it matched your Supabase resources and current goal.",
+        "is_active": True,
+    }
+
+
+def _custom_quiz_templates(topic: dict[str, Any], spec: dict[str, Any]) -> list[dict[str, Any]]:
+    top_term = next(iter((spec.get("keywords") or Counter()).keys()), topic["topic_name"].lower())
+    return [
+        {
+            "id": f"quiz-{topic['id']}-source",
+            "topic_id": topic["id"],
+            "template_type": "mcq",
+            "difficulty": int(topic.get("difficulty") or 3),
+            "template_body": {
+                "question_text": f"What should you do first while studying {topic['topic_name']}?",
+                "options": [
+                    "Read the matched Supabase source excerpt",
+                    "Skip directly to random guessing",
+                    "Ignore the topic goal",
+                    "Mark the day complete",
+                ],
+            },
+            "answer_key": {
+                "correct_index": 0,
+                "explanation": "The custom plan is grounded in the matched Supabase RAG resources.",
+            },
+            "is_active": True,
+        },
+        {
+            "id": f"quiz-{topic['id']}-focus",
+            "topic_id": topic["id"],
+            "template_type": "mcq",
+            "difficulty": int(topic.get("difficulty") or 3),
+            "template_body": {
+                "question_text": f"Which focus term is connected to {topic['topic_name']}?",
+                "options": [str(top_term).title(), "Unrelated topic", "No revision", "Random answer"],
+            },
+            "answer_key": {
+                "correct_index": 0,
+                "explanation": "This term came from the Supabase resource text used to build the plan.",
+            },
+            "is_active": True,
+        },
+    ]
+
+
+def run_custom_rag_plan_workflow(
+    user_id: str,
+    duration_days: int,
+    start_date: str | None = None,
+    name: str = "Learner",
+    level: str = "beginner",
+    email: str | None = None,
+    user_goal: str | None = None,
+) -> dict[str, Any]:
+    duration_days = max(2, min(7, int(duration_days)))
+    goal = (user_goal or "").strip()
+    resources = _all_resource_bundle(goal)
+    exam_id = f"custom-rag-{_slug(user_id)}"
+    source_names = [str(doc.get("filename") or doc["id"]) for doc in resources["documents"]]
+    exam = {
+        "id": exam_id,
+        "name": f"Custom RAG Plan - {name or 'Learner'} ({_slug(user_id)})",
+        "description": "Personal plan built from all available Supabase syllabus and RAG resources.",
+        "syllabus_version": "custom-rag",
+        "is_active": True,
+        "source_type": "custom_rag",
+        "source_document_id": (resources["documents"][0]["id"] if resources["documents"] else None),
+    }
+    _safe_upsert("exams", exam, on_conflict="id")
+    specs = _custom_topic_specs(resources, duration_days, goal)
+
+    topics = []
+    for index, spec in enumerate(specs, start=1):
+        topic = {
+            "id": f"{exam_id}-topic-{index:02d}-{_slug(spec['name'])}",
+            "exam_id": exam_id,
+            "subject": spec.get("subject") or "Custom RAG Study",
+            "topic_name": spec["name"],
+            "subtopics": [term for term, _count in (spec.get("keywords") or Counter()).most_common(6)],
+            "difficulty": int(spec.get("difficulty") or 3),
+            "priority": spec.get("priority") or "MED",
+            "estimated_hours": float(spec.get("hours") or 2.0),
+            "prerequisite_ids": [],
+            "template_ids": [],
+            "source_document_id": next(iter(spec.get("source_document_ids") or []), None),
+            "source_query": goal or spec["name"],
+        }
+        _safe_upsert("syllabus_topics", topic, on_conflict="id")
+        _safe_upsert("topic_lesson_material", _custom_lesson_material(topic, spec, goal), on_conflict="id")
+        for quiz in _custom_quiz_templates(topic, spec):
+            _safe_upsert("quiz_templates", quiz, on_conflict="id")
+        topics.append(
+            {
+                "id": topic["id"],
+                "name": topic["topic_name"],
+                "priority": topic["priority"],
+                "difficulty": topic["difficulty"],
+            }
+        )
+
+    start = date.fromisoformat(start_date).isoformat() if start_date else date.today().isoformat()
+    weak_scores = _weak_scores(user_id)
+    ordered_days = compute_ordered_plan_days(topics, weak_scores, duration_days, start)
+    plan_record = create_study_plan_record(
+        user_id=user_id,
+        exam_id_or_name=exam_id,
+        duration_days=duration_days,
+        start_date=start,
+        name=name,
+        level=level,
+        email=email,
+        meta={
+            "workflow": "custom_rag_planner",
+            "user_goal": goal,
+            "resource_counts": {
+                "exams": len(resources["exams"]),
+                "syllabus_topics": len(resources["topics"]),
+                "rag_documents": len(resources["documents"]),
+                "rag_chunks_used": len(resources["chunks"]),
+            },
+            "rag_sources": source_names[:10],
+            "topic_count": len(topics),
+            "weak_topics_considered": len(weak_scores),
+        },
+    )
+    created_days = create_study_plan_days(plan_record["id"], ordered_days)
+    plan = _plan_payload(plan_record)
+    workflow = [
+        {"step": "fetch_supabase_resources", "status": "complete", "resources": plan_record["meta"]["resource_counts"]},
+        {"step": "rank_rag_topics", "status": "complete", "topics": len(topics)},
+        {"step": "create_custom_exam", "status": "complete", "exam_id": exam_id},
+        {"step": "create_study_plan", "status": "complete", "plan_id": plan_record["id"]},
+        {"step": "create_plan_days", "status": "complete", "days_created": len(created_days)},
+    ]
+    return {"plan": plan, "workflow": workflow, "ordered_days": ordered_days}
+
+
 def sync_rag_study_sources() -> list[dict[str, Any]]:
     docs = _rag_documents()
     created = []
@@ -600,12 +895,15 @@ def _ensure_rag_topics_for_exam(exam_id: str, document_id: str) -> None:
 
 
 def _exam_id(value: str) -> str:
-    sync_rag_study_sources()
-    ensure_external_foundation_source()
     rows = _data(_table("exams").select("id,name").eq("is_active", True).execute())
     for row in rows:
         if value in (row.get("id"), row.get("name")):
             return row["id"]
+
+    if value == EXTERNAL_FOUNDATION_EXAM_ID:
+        ensure_external_foundation_source()
+        return EXTERNAL_FOUNDATION_EXAM_ID
+
     raise ValueError("This exam is not ready yet.")
 
 
@@ -677,9 +975,10 @@ def _adaptive_context(user_id: str, topic_id: str, base_difficulty: int) -> dict
 
 
 def list_exams() -> dict[str, str]:
-    sync_rag_study_sources()
-    ensure_external_foundation_source()
     rows = _data(_table("exams").select("id,name").eq("is_active", True).order("name").execute())
+    if not rows:
+        ensure_external_foundation_source()
+        rows = _data(_table("exams").select("id,name").eq("is_active", True).order("name").execute())
     return {row["name"]: row["id"] for row in rows}
 
 
