@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityHeatmapCell,
   getLearnerProfile,
@@ -58,6 +58,7 @@ export default function ProfilePage() {
 
   const initialProfile = useMemo(() => getLearnerProfile(), []);
   const [profile, setProfile] = useState<LearnerProfile>(initialProfile);
+  const profileRef = useRef(initialProfile);
   const cells = useMemo(() => progress?.activity?.heatmap?.length ? progress.activity.heatmap : monthFallback(), [progress]);
   const totalAttempts = progress?.topic_stats.reduce((sum, topic) => sum + topic.attempts, 0) ?? 0;
   const totalCorrect = progress?.topic_stats.reduce((sum, topic) => sum + topic.correct, 0) ?? 0;
@@ -75,12 +76,13 @@ export default function ProfilePage() {
   const monthLabel = activity?.month ?? new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
   const earnedBadges = activity?.badges.filter((badge) => badge.earned).length ?? 0;
 
-  async function loadProfile() {
+  const loadProfile = useCallback(async () => {
+    const currentProfile = profileRef.current;
     setLoading(true);
     setError("");
     try {
       const authProfile = await getCurrentAuthProfile();
-      const userId = authProfile?.userId ?? profile.userId;
+      const userId = authProfile?.userId ?? currentProfile.userId;
       const [profileData, progressData, planData] = await Promise.all([
         getSupabaseProfile(userId).catch(() => null),
         getProgress(userId),
@@ -88,15 +90,16 @@ export default function ProfilePage() {
       ]);
       if (profileData?.user) {
         const nextProfile: LearnerProfile = {
-          ...profile,
+          ...currentProfile,
           userId: profileData.user.id,
-          name: profileData.user.name || profile.name,
+          name: profileData.user.name || currentProfile.name,
           level: LEVELS.includes(profileData.user.level as LearnerProfile["level"])
             ? (profileData.user.level as LearnerProfile["level"])
-            : profile.level,
-          exam: profileData.active_plan?.exam || profileData.active_plan?.exam_id || profile.exam,
-          durationDays: profileData.active_plan?.duration_days || profile.durationDays,
+            : currentProfile.level,
+          exam: profileData.active_plan?.exam || profileData.active_plan?.exam_id || currentProfile.exam,
+          durationDays: profileData.active_plan?.duration_days || currentProfile.durationDays,
         };
+        profileRef.current = nextProfile;
         saveLearnerProfile(nextProfile);
         setProfile(nextProfile);
       }
@@ -107,11 +110,14 @@ export default function ProfilePage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    void loadProfile();
-  }, []);
+    const id = window.setTimeout(() => {
+      void loadProfile();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [loadProfile]);
 
   async function handleReplan() {
     setReplanning(true);

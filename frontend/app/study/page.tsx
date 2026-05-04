@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   generateStudyQuiz,
   getLearnerProfile,
@@ -35,7 +35,7 @@ export default function StudyPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [activeUserId, setActiveUserId] = useState(profile.userId);
-  const startedAtRef = useRef<number>(Date.now());
+  const startedAtRef = useRef<number>(0);
 
   const steps = lesson?.lesson_steps?.length
     ? lesson.lesson_steps
@@ -45,8 +45,9 @@ export default function StudyPage() {
   const activeStep = steps[stepIndex];
   const answeredCount = Object.keys(answers).length;
   const quizReady = !!quiz && answeredCount === quiz.total;
+  const arenaProgress = steps.length ? Math.round(((stepIndex + 1) / steps.length) * 100) : 0;
 
-  async function loadStudyRoom() {
+  const loadStudyRoom = useCallback(async () => {
     setLoading(true);
     setError("");
     setTeacherStatus("Preparing your lesson");
@@ -60,26 +61,29 @@ export default function StudyPage() {
         selected = plan.days.find((item) => item.unlocked !== false) ?? plan.days[0] ?? null;
         if (selected) saveSelectedPlanDay(selected);
       }
-      if (!selected) throw new Error("Create your study plan before opening the study room.");
+      if (!selected) throw new Error("Create your study plan before opening the study arena.");
       if (selected.unlocked === false) throw new Error(selected.unlock_reason || "Complete the previous day to unlock this lesson.");
 
       setDay(selected);
-      setTeacherStatus(selected.day_number > 1 ? "Reviewing yesterday" : "Building your first concept");
+      setTeacherStatus(selected.day_number > 1 ? "Scanning yesterday's weak links" : "Building your first arena card");
       const data = await teachPlanDay(selected.id, userId);
       setLesson(data);
       setStepIndex(0);
       setMode("lesson");
       setTeacherStatus("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not open the study room.");
+      setError(err instanceof Error ? err.message : "Could not open the study arena.");
     } finally {
       setLoading(false);
     }
-  }
+  }, [profile.userId]);
 
   useEffect(() => {
-    void loadStudyRoom();
-  }, []);
+    const id = window.setTimeout(() => {
+      void loadStudyRoom();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [loadStudyRoom]);
 
   async function startQuiz() {
     if (!day) return;
@@ -95,7 +99,7 @@ export default function StudyPage() {
       setQuiz(data);
       setQuestionIndex(0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not prepare the quiz.");
+      setError(err instanceof Error ? err.message : "Could not prepare the quiz battle.");
     }
   }
 
@@ -124,140 +128,251 @@ export default function StudyPage() {
   }
 
   return (
-    <main className="quiz-screen">
-      <header className="quiz-nav" aria-label="Study navigation">
-        <Link className="brand" href="/" aria-label="AI-SAATHI home">
-          <span className="brand-coin" aria-hidden="true" />
-          <span>AI-SAATHI</span>
-        </Link>
-        <Link className="quiz-back-link" href="/dashboard">Dashboard</Link>
-        <div className="quiz-nav-stats" aria-label="Study progress">
-          <span>{day ? `Day ${day.day_number}` : "Study Room"}</span>
-          <span style={{ marginLeft: "1rem" }}>{day?.topic_name ?? "Lesson"}</span>
-        </div>
-      </header>
+    <main className="study-arena-shell">
+      <ArenaNav />
 
-      <div className="star-field" aria-hidden="true">
-        {Array.from({ length: 28 }, (_, index) => (
-          <span key={index} className={`star star-${index + 1}`} />
-        ))}
-      </div>
+      <section className="study-arena-grid" aria-labelledby="study-title">
+        <aside className="arena-side">
+          <ArenaMentor
+            loading={loading}
+            status={teacherStatus}
+            mode={mode}
+            day={day}
+            progress={mode === "lesson" ? arenaProgress : quiz ? Math.round((answeredCount / quiz.total) * 100) : 0}
+          />
+          <ArenaMissionPanel day={day} mode={mode} />
+        </aside>
 
-      <section className="quiz-stage" aria-labelledby="study-title">
-        <div className="assistant-row quiz-assistant" aria-hidden="true">
-          <div className="pixel-computer">
-            <span className="monitor" />
-            <span className="face" />
-            <span className="base" />
-          </div>
-          <div className="speech-bubble">
-            {loading ? teacherStatus : mode === "lesson" ? "Go step by step. I will teach first, then quiz." : "Lock your answers when ready."}
-          </div>
-        </div>
+        <section className="arena-main-stage">
+          {error && !lesson ? (
+            <div className="arena-empty-state">
+              <p className="quest-kicker">Arena Locked</p>
+              <h1>Study arena</h1>
+              <p>{error}</p>
+              <Link href="/dashboard">Back to Quest Map</Link>
+            </div>
+          ) : loading ? (
+            <div className="arena-empty-state">
+              <p className="quest-kicker">AI Mentor</p>
+              <h1>{teacherStatus}</h1>
+            </div>
+          ) : (
+            <>
+              {mode === "lesson" && lesson && activeStep ? (
+                <LessonArena
+                  steps={steps}
+                  stepIndex={stepIndex}
+                  setStepIndex={setStepIndex}
+                  activeStep={activeStep}
+                  lesson={lesson}
+                  day={day}
+                  startQuiz={startQuiz}
+                />
+              ) : null}
 
-        {error && !lesson ? (
-          <div className="quiz-card" style={{ textAlign: "center" }}>
-            <h1>Study Room</h1>
-            <p style={{ color: "#ffb4b4", marginBottom: "1rem" }}>{error}</p>
-            <Link href="/dashboard" className="roadmap-button">Back to Dashboard</Link>
-          </div>
-        ) : loading ? (
-          <div className="quiz-card" style={{ textAlign: "center" }}>
-            <p className="result-kicker">Teacher</p>
-            <h1>{teacherStatus}</h1>
-          </div>
-        ) : (
-          <>
-            {mode === "lesson" && lesson && activeStep ? (
-              <section className="quiz-card" aria-labelledby="study-title">
-                <div className="quiz-card-header">
-                  <p>{day?.topic_name}</p>
-                  <span>{stepIndex + 1}/{steps.length}</span>
-                </div>
-                <h1 id="study-title">Teacher Session</h1>
-                <div className="lp-endpoint-buttons" style={{ marginBottom: "1rem" }}>
-                  {steps.map((item, index) => (
-                    <button
-                      key={item.id}
-                      className={`lp-endpoint-button ${stepIndex === index ? "active" : ""}`}
-                      type="button"
-                      onClick={() => setStepIndex(index)}
-                    >
-                      {item.title}
-                    </button>
-                  ))}
-                </div>
-                <div className="question-panel" style={{ textAlign: "left" }}>
-                  <p className="question-kicker">{activeStep.kind}</p>
-                  <h2>{activeStep.title}</h2>
-                  <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.75, margin: 0 }}>{activeStep.content}</p>
-                  {activeStep.checkpoint ? (
-                    <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.7, marginTop: "1rem", opacity: 0.82 }}>{activeStep.checkpoint}</p>
-                  ) : null}
-                </div>
-                {lesson.personalization ? (
-                  <div className="reward-grid" style={{ marginTop: "1rem" }} aria-label="Supabase personalization">
-                    <span>
-                      <strong>{Math.round(lesson.personalization.accuracy)}%</strong>
-                      DB accuracy
-                    </span>
-                    <span>
-                      <strong>{Math.round(lesson.personalization.weakness_score)}</strong>
-                      Focus score
-                    </span>
-                  </div>
-                ) : null}
-                <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem", flexWrap: "wrap" }}>
-                  <button
-                    className="quiz-primary-button"
-                    type="button"
-                    onClick={() => setStepIndex((current) => Math.min(steps.length - 1, current + 1))}
-                    disabled={stepIndex === steps.length - 1}
-                  >
-                    Next
-                  </button>
-                  <button className="quiz-primary-button" type="button" onClick={startQuiz}>
-                    Start Quiz Battle
-                  </button>
-                </div>
-              </section>
-            ) : null}
+              {mode === "quiz" ? (
+                <BossQuizBattle
+                  quiz={quiz}
+                  answers={answers}
+                  error={error}
+                  submitting={submitting}
+                  quizReady={quizReady}
+                  questionIndex={questionIndex}
+                  setQuestionIndex={setQuestionIndex}
+                  chooseAnswer={chooseAnswer}
+                  submitQuiz={submitQuiz}
+                />
+              ) : null}
 
-            {mode === "quiz" ? (
-              <QuizPanel
-                quiz={quiz}
-                answers={answers}
-                error={error}
-                submitting={submitting}
-                quizReady={quizReady}
-                questionIndex={questionIndex}
-                setQuestionIndex={setQuestionIndex}
-                chooseAnswer={chooseAnswer}
-                submitQuiz={submitQuiz}
-              />
-            ) : null}
-
-            {mode === "result" && result ? (
-              <ResultPanel
-                result={result}
-                retry={startQuiz}
-                revise={() => {
-                  setMode("lesson");
-                  setStepIndex(0);
-                }}
-              />
-            ) : null}
-          </>
-        )}
+              {mode === "result" && result ? (
+                <XPRewardModal
+                  result={result}
+                  retry={startQuiz}
+                  revise={() => {
+                    setMode("lesson");
+                    setStepIndex(0);
+                  }}
+                />
+              ) : null}
+            </>
+          )}
+        </section>
       </section>
-
-      <div className="moon-band moon-left" aria-hidden="true" />
-      <div className="moon-band moon-right" aria-hidden="true" />
     </main>
   );
 }
 
-function QuizPanel({
+function ArenaNav() {
+  return (
+    <header className="quest-nav arena-nav" aria-label="Study navigation">
+      <Link className="quest-brand" href="/">
+        <span className="quest-brand-mark">A</span>
+        <span>AI-SAATHI</span>
+      </Link>
+      <nav aria-label="Primary">
+        <Link href="/dashboard">Quest Map</Link>
+        <Link className="active" href="/study">Arena</Link>
+        <Link href="/profile">Profile</Link>
+      </nav>
+      <Link className="quest-primary-action" href="/dashboard">Map</Link>
+    </header>
+  );
+}
+
+function ArenaMentor({
+  loading,
+  status,
+  mode,
+  day,
+  progress,
+}: Readonly<{
+  loading: boolean;
+  status: string;
+  mode: StudyMode;
+  day: PlanDay | null;
+  progress: number;
+}>) {
+  const message = loading
+    ? status
+    : mode === "lesson"
+      ? "Read the card, answer the checkpoint in your head, then move. Short reps beat panic scrolling."
+      : mode === "quiz"
+        ? "Battle mode: choose deliberately. The goal is accuracy first, speed second."
+        : "Result is feedback, not judgement. Patch the weak link and go again.";
+
+  return (
+    <section className="arena-mentor-card" aria-label="AI mentor panel">
+      <div className="ai-mentor-core small" aria-hidden="true">
+        <span className="ai-mentor-eye" />
+        <span className="ai-mentor-pulse" />
+      </div>
+      <div>
+        <p className="quest-kicker">AI Mentor</p>
+        <h2>{day ? `Day ${day.day_number}` : "Study Arena"}</h2>
+        <p>{message}</p>
+      </div>
+      <div className="arena-progress-bar" aria-label={`${progress}% arena progress`}>
+        <span style={{ width: `${progress}%` }} />
+      </div>
+    </section>
+  );
+}
+
+function ArenaMissionPanel({ day, mode }: Readonly<{ day: PlanDay | null; mode: StudyMode }>) {
+  return (
+    <section className="arena-mission-panel" aria-label="Daily mission status">
+      <p className="quest-kicker">Daily Mission</p>
+      <h2>{day?.topic_name ?? "Select a quest"}</h2>
+      <div>
+        <span>Mode</span>
+        <strong>{mode === "lesson" ? "Micro Lesson" : mode === "quiz" ? "Boss Quiz" : "Reward"}</strong>
+      </div>
+      <div>
+        <span>Weak Topic</span>
+        <strong>{day?.subject ?? "Pending"}</strong>
+      </div>
+      <div>
+        <span>Reward</span>
+        <strong>+180 XP</strong>
+      </div>
+    </section>
+  );
+}
+
+function LessonArena({
+  steps,
+  stepIndex,
+  setStepIndex,
+  activeStep,
+  lesson,
+  day,
+  startQuiz,
+}: Readonly<{
+  steps: TeachResponse["lesson_steps"];
+  stepIndex: number;
+  setStepIndex: (index: number | ((current: number) => number)) => void;
+  activeStep: NonNullable<TeachResponse["lesson_steps"]>[number];
+  lesson: TeachResponse;
+  day: PlanDay | null;
+  startQuiz: () => void;
+}>) {
+  return (
+    <section className="lesson-arena" aria-labelledby="study-title">
+      <div className="arena-title-row">
+        <div>
+          <p className="quest-kicker">Focused Study Arena</p>
+          <h1 id="study-title">{day?.topic_name ?? lesson.topic_name}</h1>
+        </div>
+        <button type="button" onClick={startQuiz}>Start Boss Quiz</button>
+      </div>
+
+      <div className="lesson-step-tabs" aria-label="Micro lesson steps">
+        {steps.map((item, index) => (
+          <button
+            key={item.id}
+            type="button"
+            className={stepIndex === index ? "active" : ""}
+            onClick={() => setStepIndex(index)}
+          >
+            <span>{index + 1}</span>
+            {item.title}
+          </button>
+        ))}
+      </div>
+
+      <LessonMicroCard step={activeStep} />
+
+      {lesson.personalization ? (
+        <div className="lesson-signal-row" aria-label="Personalized study signal">
+          <span><strong>{Math.round(lesson.personalization.accuracy)}%</strong> accuracy memory</span>
+          <span><strong>{Math.round(lesson.personalization.weakness_score)}</strong> focus score</span>
+          <span><strong>{stepIndex + 1}/{steps.length}</strong> cards</span>
+        </div>
+      ) : null}
+
+      <div className="arena-controls">
+        <button
+          type="button"
+          onClick={() => setStepIndex((current) => Math.max(0, current - 1))}
+          disabled={stepIndex === 0}
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          onClick={() => setStepIndex((current) => Math.min(steps.length - 1, current + 1))}
+          disabled={stepIndex === steps.length - 1}
+        >
+          Next Micro-Card
+        </button>
+        <button type="button" className="primary" onClick={startQuiz}>
+          Continue Quest
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function LessonMicroCard({ step }: Readonly<{ step: NonNullable<TeachResponse["lesson_steps"]>[number] }>) {
+  return (
+    <article className="lesson-micro-card">
+      <div className="micro-card-label">
+        <span>{step.kind}</span>
+        <b>Micro-card</b>
+      </div>
+      <h2>{step.title}</h2>
+      <p>{step.content}</p>
+      {step.checkpoint ? (
+        <div className="socratic-checkpoint">
+          <span>Socratic checkpoint</span>
+          <strong>{step.checkpoint}</strong>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function BossQuizBattle({
   quiz,
   answers,
   error,
@@ -284,60 +399,57 @@ function QuizPanel({
   const canGoNext = !!quiz && questionIndex < quiz.total - 1;
 
   return (
-    <section className="quiz-card" aria-labelledby="quiz-title">
-      <div className="quiz-card-header">
-        <p>Quiz Battle</p>
-        <span>{quiz ? `${Object.keys(answers).length}/${quiz.total}` : "Loading"}</span>
+    <section className="boss-quiz-battle" aria-labelledby="quiz-title">
+      <div className="boss-header">
+        <div>
+          <p className="quest-kicker">Boss Quiz Battle</p>
+          <h1 id="quiz-title">Defeat the weak-topic boss</h1>
+        </div>
+        <div className="boss-health" aria-label={quiz ? `${Object.keys(answers).length} of ${quiz.total} answered` : "Loading battle"}>
+          <span style={{ width: quiz ? `${(Object.keys(answers).length / quiz.total) * 100}%` : "8%" }} />
+        </div>
       </div>
-      <h1 id="quiz-title">Show What You Learned</h1>
+
       {!quiz ? (
-        <p style={{ textAlign: "center", padding: "2rem", opacity: 0.7 }}>Preparing questions...</p>
+        <div className="battle-loading">Summoning readable questions...</div>
       ) : (
         <>
           {quiz.adaptive_context ? (
-            <div className="explanation-panel" style={{ marginBottom: "1rem" }}>
-              <strong>Adapted by Supabase history</strong>
-              <p>
-                Difficulty {quiz.adaptive_context.adapted_difficulty}/5 from {quiz.adaptive_context.attempts} saved question attempts.
-              </p>
+            <div className="battle-adaptive-note">
+              Adapted to difficulty {quiz.adaptive_context.adapted_difficulty}/5 from {quiz.adaptive_context.attempts} saved attempts.
             </div>
           ) : null}
           {activeQuestion ? (
-            <div className="question-panel" style={{ textAlign: "left" }}>
-              <p className="question-kicker">Question {questionIndex + 1} of {quiz.total}</p>
+            <article className="battle-question-card">
+              <span>Question {questionIndex + 1}/{quiz.total}</span>
               <h2>{activeQuestion.question_text}</h2>
-              <div className="option-grid" role="list" aria-label={`Question ${questionIndex + 1} answers`}>
+              <div className="battle-option-grid" role="list" aria-label={`Question ${questionIndex + 1} answers`}>
                 {activeQuestion.options.map((option, optionIndex) => (
                   <button
                     key={option}
-                    className={`option-button ${answers[questionIndex] === optionIndex ? "selected" : ""}`}
+                    className={answers[questionIndex] === optionIndex ? "selected" : ""}
                     type="button"
                     onClick={() => chooseAnswer(questionIndex, optionIndex)}
                   >
-                    <span>{String.fromCharCode(65 + optionIndex)}.</span>
-                    {option}
+                    <b>{String.fromCharCode(65 + optionIndex)}</b>
+                    <span>{option}</span>
                   </button>
                 ))}
               </div>
-            </div>
+            </article>
           ) : null}
-          {error ? <p role="alert" style={{ color: "#ffb4b4", marginTop: "1rem" }}>{error}</p> : null}
-          <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem", flexWrap: "wrap" }}>
-            <button className="quiz-secondary-button" type="button" onClick={() => setQuestionIndex(questionIndex - 1)} disabled={!canGoBack || submitting}>
+          {error ? <p className="quest-alert" role="alert">{error}</p> : null}
+          <div className="arena-controls">
+            <button type="button" onClick={() => setQuestionIndex(questionIndex - 1)} disabled={!canGoBack || submitting}>
               Previous
             </button>
             {canGoNext ? (
-              <button
-                className="quiz-primary-button"
-                type="button"
-                onClick={() => setQuestionIndex(questionIndex + 1)}
-                disabled={!hasAnswer || submitting}
-              >
-                Next Question
+              <button type="button" className="primary" onClick={() => setQuestionIndex(questionIndex + 1)} disabled={!hasAnswer || submitting}>
+                Next Strike
               </button>
             ) : (
-              <button className="quiz-primary-button" type="button" onClick={submitQuiz} disabled={!quizReady || submitting}>
-                {submitting ? "Checking answers..." : "Finish Quiz"}
+              <button type="button" className="primary" onClick={submitQuiz} disabled={!quizReady || submitting}>
+                {submitting ? "Checking..." : "Finish Battle"}
               </button>
             )}
           </div>
@@ -347,7 +459,7 @@ function QuizPanel({
   );
 }
 
-function ResultPanel({
+function XPRewardModal({
   result,
   retry,
   revise,
@@ -356,44 +468,35 @@ function ResultPanel({
   retry: () => void;
   revise: () => void;
 }>) {
+  const earnedXp = result.score * 45 + (result.passed ? 120 : 30);
   return (
-    <section className="quiz-card result-card" aria-labelledby="result-title">
-      <p className="result-kicker">Quest Complete</p>
-      <h1 id="result-title">{result.passed ? "Next Day Unlocked" : "Revise And Retry"}</h1>
-      <div className="score-orb" aria-label={`Score ${result.score} out of ${result.total}`}>
-        <span>{result.score}</span>
-        <small>/{result.total}</small>
-      </div>
-      <div className="reward-grid">
-        <span>
-          <strong>{Math.round(result.accuracy)}%</strong>
-          Accuracy
-        </span>
-        <span>
-          <strong>{result.pass_mark}%</strong>
-          Goal
-        </span>
-      </div>
-      <div className="explanation-panel" role="status">
-        <strong>{result.passed ? "Great work" : "Stay on this day"}</strong>
+    <section className="xp-reward-modal" aria-labelledby="result-title">
+      <div className="xp-modal-card">
+        <p className="quest-kicker">XP Reward Modal</p>
+        <h1 id="result-title">{result.passed ? "Quest Cleared" : "Revision Required"}</h1>
+        <div className="xp-orb" aria-label={`${earnedXp} XP earned`}>
+          <strong>+{earnedXp}</strong>
+          <span>XP</span>
+        </div>
+        <div className="xp-result-grid">
+          <span><strong>{result.score}/{result.total}</strong> score</span>
+          <span><strong>{Math.round(result.accuracy)}%</strong> accuracy</span>
+          <span><strong>{result.pass_mark}%</strong> unlock mark</span>
+        </div>
         <p>
           {result.passed
-            ? "Your next study day is ready on the Dashboard."
+            ? "Nice. The next node is ready. Review one miss before moving so the win actually sticks."
             : result.replan_triggered
-              ? "Supabase flagged this topic for replanning. Revise the lesson and retry the quiz."
-              : "Revise the lesson and retry the quiz to unlock the next day."}
+              ? "The radar marked this as a weak topic. Revise the micro-card and retry with a calmer route."
+              : "Close attempt. Patch the concept, then take the boss battle again."}
         </p>
-      </div>
-      <div className="result-actions">
-        <button className="quiz-primary-button" type="button" onClick={result.passed ? retry : revise}>
-          {result.passed ? "Practice Again" : "Revise Lesson"}
-        </button>
-        <button className="quiz-secondary-button" type="button" onClick={retry}>
-          Retry Quiz
-        </button>
-        <Link className="quiz-secondary-button" href="/dashboard">
-          Dashboard
-        </Link>
+        <div className="arena-controls centered">
+          <button type="button" className="primary" onClick={result.passed ? retry : revise}>
+            {result.passed ? "Practice Again" : "Revise Lesson"}
+          </button>
+          <button type="button" onClick={retry}>Retry Battle</button>
+          <Link href="/dashboard">Quest Map</Link>
+        </div>
       </div>
     </section>
   );

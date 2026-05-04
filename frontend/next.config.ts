@@ -3,6 +3,7 @@ import { dirname } from "path";
 import { fileURLToPath } from "url";
 
 const appRoot = dirname(fileURLToPath(import.meta.url));
+const workspaceRoot = dirname(appRoot);
 const backendUrl = (
   process.env.BACKEND_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
@@ -11,7 +12,7 @@ const backendUrl = (
 
 const nextConfig: NextConfig = {
   turbopack: {
-    root: appRoot,
+    root: workspaceRoot,
   },
   async rewrites() {
     return [

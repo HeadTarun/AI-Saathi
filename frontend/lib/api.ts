@@ -233,6 +233,34 @@ export interface StudyGoal {
   id: string;
 }
 
+export interface AgentRequest {
+  user_id: string;
+  message: string;
+  context?: Record<string, unknown>;
+}
+
+export interface AgentResponse {
+  agent: string;
+  task: string;
+  message: string;
+  data: Record<string, unknown>;
+  events: unknown[];
+}
+
+export type AgentStreamEventName =
+  | "graph_started"
+  | "intent_detected"
+  | "tool_started"
+  | "tool_finished"
+  | "node_finished"
+  | "final_response"
+  | "error";
+
+export interface AgentStreamEvent {
+  event: AgentStreamEventName;
+  data: Record<string, unknown>;
+}
+
 const PROFILE_KEY = "aiSaathiProfile";
 const SELECTED_DAY_KEY = "aiSaathiSelectedPlanDay";
 
@@ -452,6 +480,64 @@ export async function teachPlanDay(planDayId: string, userId: string): Promise<T
   );
 }
 
+function parseStreamData(event: Event): Record<string, unknown> {
+  return JSON.parse((event as MessageEvent).data) as Record<string, unknown>;
+}
+
+function agentStreamUrl(path: string, request: AgentRequest): string {
+  const params = new URLSearchParams({
+    user_id: request.user_id,
+    message: request.message,
+  });
+  if (request.context && Object.keys(request.context).length > 0) {
+    params.set("context", JSON.stringify(request.context));
+  }
+  return `${BACKEND_BASE_URL}${path}?${params.toString()}`;
+}
+
+export function streamStudyAgent(
+  request: AgentRequest,
+  onEvent: (event: AgentStreamEvent) => void,
+  onFinal: (response: AgentResponse) => void,
+  onError: (message: string) => void
+): () => void {
+  const source = new EventSource(agentStreamUrl("/study/agent/stream", request));
+  const events: AgentStreamEventName[] = [
+    "graph_started",
+    "intent_detected",
+    "tool_started",
+    "tool_finished",
+    "node_finished",
+    "final_response",
+    "error",
+  ];
+
+  events.forEach((eventName) => {
+    source.addEventListener(eventName, (event) => {
+      try {
+        const data = parseStreamData(event);
+        onEvent({ event: eventName, data });
+        if (eventName === "final_response") {
+          onFinal(data as unknown as AgentResponse);
+          source.close();
+        } else if (eventName === "error") {
+          onError(String(data.message || "Study agent stream failed."));
+          source.close();
+        }
+      } catch {
+        onError("Study agent stream failed.");
+        source.close();
+      }
+    });
+  });
+
+  source.onerror = () => {
+    onError("Study agent stream failed.");
+    source.close();
+  };
+  return () => source.close();
+}
+
 export function streamTeachPlanDay(
   planDayId: string,
   userId: string,
@@ -462,20 +548,35 @@ export function streamTeachPlanDay(
   const source = new EventSource(
     `${BACKEND_BASE_URL}/study/teach/${encodeURIComponent(planDayId)}/stream?user_id=${encodeURIComponent(userId)}`
   );
-  const statusEvents = ["preparing", "reviewing", "explaining", "practice"];
+  const statusEvents = [
+    "graph_started",
+    "intent_detected",
+    "tool_started",
+    "tool_finished",
+    "node_finished",
+  ];
   statusEvents.forEach((eventName) => {
     source.addEventListener(eventName, (event) => {
-      const data = JSON.parse((event as MessageEvent).data) as { message?: string };
+      const data = parseStreamData(event) as { message?: string; tool_name?: string; agent?: string };
       if (data.message) onStatus(data.message);
+      else if (data.tool_name) onStatus(`Running ${data.tool_name}.`);
+      else if (data.agent) onStatus(`${data.agent} is working.`);
     });
   });
+  source.addEventListener("final_response", (event) => {
+    const response = parseStreamData(event) as unknown as AgentResponse;
+    if (response.data) {
+      onComplete(response.data as unknown as TeachResponse);
+      source.close();
+    }
+  });
   source.addEventListener("complete", (event) => {
-    onComplete(JSON.parse((event as MessageEvent).data) as TeachResponse);
+    onComplete(parseStreamData(event) as unknown as TeachResponse);
     source.close();
   });
   source.addEventListener("error", (event) => {
     try {
-      const data = JSON.parse((event as MessageEvent).data) as { message?: string };
+      const data = parseStreamData(event) as { message?: string };
       onError(data.message || "Could not open this lesson.");
     } catch {
       onError("Could not open this lesson.");

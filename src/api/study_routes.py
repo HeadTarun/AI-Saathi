@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from agents import run_study_task
+from agents.langgraph_workflow import run_study_graph, stream_study_graph_events
+from agents.llm import LLMConfigurationError
 
 
 router = APIRouter(prefix="/study", tags=["Study Companion"])
@@ -97,6 +98,122 @@ class ProfileResponse(BaseModel):
     source: str = "supabase"
 
 
+class AgentRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, description="Application user identifier.")
+    message: str = Field(..., min_length=1, description="Natural-language study request.")
+    context: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional structured context such as plan_day_id, topic_id, or UI state.",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "user_id": "learner-123",
+                "message": "Teach my current plan day",
+                "context": {"plan_day_id": "day-abc"},
+            }
+        }
+    }
+
+
+class AgentResponse(BaseModel):
+    agent: str = Field(..., description="Routed specialist agent.")
+    task: str = Field(..., description="Resolved task name.")
+    message: str = Field(..., description="Concise user-facing status or result message.")
+    data: dict[str, Any] = Field(default_factory=dict, description="Structured task result.")
+    events: list[Any] = Field(default_factory=list, description="Operational graph events.")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "agent": "teacher",
+                "task": "teach_day",
+                "message": "Opening your lesson.",
+                "data": {"topic_name": "Percentage", "status": "taught"},
+                "events": [{"node": "supervisor", "agent": "teacher", "task": "teach_day"}],
+            }
+        }
+    }
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+def _agent_event_stream(input_data: dict[str, Any]):
+    for item in stream_study_graph_events(input_data):
+        event = str(item.get("event") or "message")
+        data = item.get("data") or {}
+        yield _sse(event, data)
+
+
+@router.post("/agent", response_model=AgentResponse)
+async def run_study_agent(req: AgentRequest) -> AgentResponse:
+    try:
+        result = run_study_graph(
+            {
+                "user_id": req.user_id,
+                "message": req.message,
+                "context": req.context,
+            }
+        )
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Study agent failed: {exc}") from exc
+
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=500, detail="Study agent returned an invalid response")
+    if result.get("data", {}).get("ok") is False or "error" in result or "error" in result.get("data", {}):
+        raise HTTPException(status_code=502, detail=result.get("error") or result.get("data", {}).get("error") or result)
+    return AgentResponse(**result)
+
+
+@router.post("/agent/stream")
+async def run_study_agent_stream(req: AgentRequest) -> StreamingResponse:
+    return StreamingResponse(
+        _agent_event_stream(
+            {
+                "user_id": req.user_id,
+                "message": req.message,
+                "context": req.context,
+            }
+        ),
+        media_type="text/event-stream",
+    )
+
+
+@router.get("/agent/stream")
+async def run_study_agent_stream_get(
+    user_id: str = Query(..., min_length=1),
+    message: str = Query(..., min_length=1),
+    context: str | None = None,
+) -> StreamingResponse:
+    parsed_context: dict[str, Any] = {}
+    if context:
+        try:
+            raw = json.loads(context)
+            if isinstance(raw, dict):
+                parsed_context = raw
+            else:
+                raise ValueError("context must be a JSON object")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return StreamingResponse(
+        _agent_event_stream(
+            {
+                "user_id": user_id,
+                "message": message,
+                "context": parsed_context,
+            }
+        ),
+        media_type="text/event-stream",
+    )
+
+
 @router.get("/exams")
 async def list_study_goals() -> dict[str, Any]:
     return {"exams": run_study_task("list_exams")["exams"]}
@@ -177,20 +294,26 @@ async def teach_day(plan_day_id: str, user_id: str) -> TeachResponse:
 
 @router.get("/teach/{plan_day_id}/stream")
 async def teach_day_stream(plan_day_id: str, user_id: str) -> StreamingResponse:
-    async def events():
-        for status, message in [
-            ("preparing", "Preparing your lesson"),
-            ("reviewing", "Checking what to revise"),
-            ("explaining", "Building the concept"),
-            ("practice", "Preparing one practice step"),
-        ]:
-            yield f"event: {status}\ndata: {json.dumps({'message': message})}\n\n"
-            await asyncio.sleep(0.1)
-        try:
-            result = run_study_task("teach_day", plan_day_id=plan_day_id, user_id=user_id)
-            yield f"event: complete\ndata: {json.dumps(result, default=str)}\n\n"
-        except ValueError as exc:
-            yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+    def events():
+        final_data: dict[str, Any] | None = None
+        for item in stream_study_graph_events(
+            {
+                "user_id": user_id,
+                "message": f"Teach plan day {plan_day_id}",
+                "context": {
+                    "plan_day_id": plan_day_id,
+                    "preferred_agent": "teacher",
+                    "preferred_tool": "study_teach_plan_day",
+                },
+            }
+        ):
+            event = str(item.get("event") or "message")
+            data = item.get("data") or {}
+            if event == "final_response":
+                final_data = data.get("data") if isinstance(data, dict) else None
+            yield _sse(event, data)
+        if final_data is not None:
+            yield _sse("complete", final_data)
 
     return StreamingResponse(events(), media_type="text/event-stream")
 
