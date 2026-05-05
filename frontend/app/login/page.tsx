@@ -7,10 +7,9 @@ import {
   getLearnerProfile,
   profileFromGoogleLogin,
   resetLearnerProfile,
-  routeAfterLogin,
   saveLearnerProfile,
 } from "@/lib/api";
-import { getCurrentAuthProfile, signInWithPassword, signOutSupabase } from "@/lib/supabase";
+import { completeOAuthRedirect, signInWithPassword, signOutSupabase } from "@/lib/supabase";
 
 export default function LoginPage() {
   const [showIntro, setShowIntro] = useState(true);
@@ -23,6 +22,12 @@ export default function LoginPage() {
   useEffect(() => {
     async function boot() {
       const params = new URLSearchParams(window.location.search);
+      const pendingEmail = params.get("email");
+      if (params.get("confirmed") === "pending") {
+        setError("Account created in Supabase. Confirm your email first, then sign in.");
+        if (pendingEmail) setEmail(pendingEmail);
+      }
+
       const code = params.get("code");
       const state = params.get("state");
 
@@ -35,7 +40,7 @@ export default function LoginPage() {
           saveLearnerProfile(next);
           setProfile(next);
           window.history.replaceState({}, "", "/login");
-          window.location.href = await routeAfterLogin(next.userId);
+          window.location.href = "/dashboard";
           return;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Google sign in could not be completed.");
@@ -44,7 +49,7 @@ export default function LoginPage() {
         }
       }
 
-      const authProfile = await getCurrentAuthProfile();
+      const authProfile = await completeOAuthRedirect();
       if (!authProfile) return;
       setProfile((current) => {
         const next = {
@@ -57,6 +62,7 @@ export default function LoginPage() {
         return next;
       });
       setEmail(authProfile.email);
+      window.location.href = "/dashboard";
     }
 
     void boot();
@@ -81,7 +87,7 @@ export default function LoginPage() {
       };
       saveLearnerProfile(next);
       setProfile(next);
-      window.location.href = await routeAfterLogin(next.userId);
+      window.location.href = "/dashboard";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sign in.");
     } finally {
@@ -89,9 +95,12 @@ export default function LoginPage() {
     }
   }
 
-  function handleReset() {
+  function resetLocalProfile() {
     const next = resetLearnerProfile();
     setProfile(next);
+  }
+
+  function handleCreateAccount() {
     window.location.href = "/signup";
   }
 
@@ -100,7 +109,8 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await signOutSupabase();
-      handleReset();
+      resetLocalProfile();
+      window.location.href = "/signup";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sign out.");
       setLoading(false);
@@ -160,7 +170,11 @@ export default function LoginPage() {
           <h1 id="login-heading">Continue Learning</h1>
 
           <div className="provider-grid auth-provider-grid" aria-label="Social sign in">
-            <a className="provider-button google-provider" href="/api/auth/google/start" style={{ textDecoration: "none" }}>
+            <a
+              className="provider-button google-provider"
+              href="/api/auth/google/start"
+              style={{ textDecoration: "none" }}
+            >
               <span className="google-mark" aria-hidden="true">G</span>
               Continue with Google
             </a>
@@ -196,7 +210,7 @@ export default function LoginPage() {
             {loading ? "Signing in..." : "Sign In"}
           </button>
 
-          <button className="login-button" type="button" onClick={handleReset} disabled={loading} style={{ marginTop: "0.75rem" }}>
+          <button className="login-button" type="button" onClick={handleCreateAccount} disabled={loading} style={{ marginTop: "0.75rem" }}>
             Create New Account
           </button>
 

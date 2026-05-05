@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   generateStudyQuiz,
   getLearnerProfile,
@@ -21,7 +21,6 @@ import soundManager from "@/utils/soundManager";
 type StudyMode = "lesson" | "quiz" | "result";
 
 export default function StudyPage() {
-  const profile = useMemo(() => getLearnerProfile(), []);
   const [day, setDay] = useState<PlanDay | null>(null);
   const [lesson, setLesson] = useState<TeachResponse | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
@@ -34,7 +33,7 @@ export default function StudyPage() {
   const [teacherStatus, setTeacherStatus] = useState("Preparing your lesson");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [activeUserId, setActiveUserId] = useState(profile.userId);
+  const [activeUserId, setActiveUserId] = useState("");
   const startedAtRef = useRef<number>(0);
 
   const steps = lesson?.lesson_steps?.length
@@ -54,7 +53,15 @@ export default function StudyPage() {
     try {
       let selected = getSelectedPlanDay();
       const authProfile = await getCurrentAuthProfile();
-      const userId = authProfile?.userId ?? profile.userId;
+      const localProfile = getLearnerProfile();
+      const googleUserId = !authProfile && localProfile.userId.startsWith("google-") ? localProfile.userId : "";
+
+      if (!authProfile && !googleUserId) {
+        window.location.href = "/login?next=/study";
+        return;
+      }
+
+      const userId = authProfile?.userId || googleUserId;
       setActiveUserId(userId);
       if (!selected) {
         const plan = await getStudyPlan(userId);
@@ -76,7 +83,7 @@ export default function StudyPage() {
     } finally {
       setLoading(false);
     }
-  }, [profile.userId]);
+  }, []);
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -211,7 +218,9 @@ function ArenaNav() {
       </Link>
       <nav aria-label="Primary">
         <Link href="/dashboard">Quest Map</Link>
+        <Link href="/plan">Plan</Link>
         <Link className="active" href="/study">Arena</Link>
+        <Link href="/quiz">Quiz</Link>
         <Link href="/profile">Profile</Link>
       </nav>
       <Link className="quest-primary-action" href="/dashboard">Map</Link>

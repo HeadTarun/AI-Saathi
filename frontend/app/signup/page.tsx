@@ -27,7 +27,8 @@ export default function SignupPage() {
 
     setLoading(true);
     try {
-      const authProfile = await signUpWithPassword(trimmedEmail, password, trimmedName);
+      const result = await signUpWithPassword(trimmedEmail, password, trimmedName);
+      const authProfile = result.profile;
 
       saveLearnerProfile({
         ...existingProfile,
@@ -35,7 +36,7 @@ export default function SignupPage() {
         name: authProfile.name || trimmedName,
         email: authProfile.email || trimmedEmail,
       });
-      window.location.href = "/login";
+      window.location.href = "/dashboard";
     } catch (requestError) {
       setError(
         requestError instanceof Error

@@ -41,7 +41,7 @@ export default function PlanPage() {
         const googleProfile = localProfile.userId.startsWith("google-") ? localProfile : null;
 
         if (!authProfile && !googleProfile) {
-          setError("Sign in before generating a study plan.");
+          window.location.href = "/login?next=/plan";
           return;
         }
 

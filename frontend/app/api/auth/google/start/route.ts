@@ -13,7 +13,10 @@ export async function GET(request: NextRequest) {
   }
 
   const origin = request.nextUrl.origin;
-  const redirectUri = `${origin}/dashboard`;
+  const requestedRedirect = request.nextUrl.searchParams.get("redirect") || "/dashboard";
+  const redirectPath =
+    requestedRedirect.startsWith("/") && !requestedRedirect.startsWith("//") ? requestedRedirect : "/dashboard";
+  const redirectUri = `${origin}${redirectPath}`;
   const state = randomState();
   const url = new URL(authUri);
   url.searchParams.set("client_id", clientId);

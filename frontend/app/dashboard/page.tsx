@@ -23,21 +23,25 @@ import { getCurrentAuthProfile } from "@/lib/supabase";
 const FOUNDATION_EXAM_ID = "aptitude-reasoning-foundation";
 const FOUNDATION_GOAL =
   "Create a custom aptitude and reasoning plan using IndiaBix and GeeksforGeeks-style knowledge practice.";
+const DEFAULT_PROFILE: LearnerProfile = {
+  userId: "learner-preview",
+  name: "Learner",
+  exam: "SSC CGL",
+  level: "beginner",
+  durationDays: 5,
+};
 
 export default function DashboardPage() {
   const [plan, setPlan] = useState<StudyPlan | null>(null);
   const [activeDay, setActiveDay] = useState<PlanDay | null>(null);
-  const [profile, setProfile] = useState<LearnerProfile>(() => getLearnerProfile());
+  const [profile, setProfile] = useState<LearnerProfile>(DEFAULT_PROFILE);
   const [loading, setLoading] = useState(true);
   const [customPlanLoading, setCustomPlanLoading] = useState(false);
-  const [authStatus, setAuthStatus] = useState("");
   const [error, setError] = useState("");
 
   const taughtCount = plan?.days.filter((day) => day.status === "taught").length ?? 0;
   const progress = plan?.days.length ? Math.round((taughtCount / plan.days.length) * 100) : 0;
   const nextDay = activeDay ?? plan?.days.find((day) => day.status !== "taught") ?? plan?.days[0] ?? null;
-  const totalMinutes = plan?.days.reduce((sum, day) => sum + day.allocated_minutes, 0) ?? 0;
-  const remainingCount = plan?.days.filter((day) => day.status !== "taught").length ?? 0;
   const xp = 1250 + taughtCount * 180 + progress * 12;
   const streak = Math.max(1, Math.min(14, taughtCount + 3));
   const level = Math.max(1, Math.floor(xp / 900));
@@ -77,9 +81,41 @@ export default function DashboardPage() {
   useEffect(() => {
     async function boot() {
       const storedProfile = getLearnerProfile();
-      const authProfile = await getCurrentAuthProfile();
-      let nextUserId = storedProfile.userId;
-      if (authProfile) {
+      try {
+        let nextUserId = storedProfile.userId;
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get("code");
+        const state = params.get("state");
+
+        if (code && state) {
+          setLoading(true);
+          try {
+            const googleProfile = await completeGoogleLogin(code, state, `${window.location.origin}/dashboard`);
+            const nextProfile = profileFromGoogleLogin(googleProfile);
+            saveLearnerProfile(nextProfile);
+            setProfile(nextProfile);
+            window.history.replaceState({}, "", "/dashboard");
+            await loadPlan(nextProfile.userId);
+            return;
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Google sign in could not be completed.");
+            setLoading(false);
+            return;
+          }
+        }
+
+        const authProfile = await getCurrentAuthProfile();
+        if (!authProfile) {
+          if (storedProfile.userId.startsWith("google-")) {
+            nextUserId = storedProfile.userId;
+            await loadPlan(nextUserId);
+            return;
+          }
+
+          window.location.href = "/login?next=/dashboard";
+          return;
+        }
+
         const nextProfile: LearnerProfile = {
           ...storedProfile,
           userId: authProfile.userId,
@@ -88,30 +124,11 @@ export default function DashboardPage() {
         };
         saveLearnerProfile(nextProfile);
         setProfile(nextProfile);
-        nextUserId = authProfile.userId;
+        await loadPlan(authProfile.userId);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not verify your Supabase session.");
+        setLoading(false);
       }
-
-      const params = new URLSearchParams(window.location.search);
-      const code = params.get("code");
-      const state = params.get("state");
-
-      if (code && state) {
-        setAuthStatus("Signing you in with Google...");
-        try {
-          const googleProfile = await completeGoogleLogin(code, state, `${window.location.origin}/dashboard`);
-          const nextProfile = profileFromGoogleLogin(googleProfile);
-          saveLearnerProfile(nextProfile);
-          setProfile(nextProfile);
-          window.history.replaceState({}, "", "/dashboard");
-          nextUserId = nextProfile.userId;
-        } catch (err) {
-          setError(err instanceof Error ? err.message : "Google sign in could not be completed.");
-        } finally {
-          setAuthStatus("");
-        }
-      }
-
-      await loadPlan(code && state ? getLearnerProfile().userId : nextUserId);
     }
 
     const id = window.setTimeout(() => {
@@ -175,7 +192,7 @@ export default function DashboardPage() {
           <AImentorPanel
             name={profile.name}
             nextDay={nextDay}
-            loadingText={loading ? authStatus || "Syncing your quest map..." : ""}
+            loadingText={loading ? "Syncing your quest map..." : ""}
             onCustomPlan={createKnowledgeBasePlan}
             customPlanLoading={customPlanLoading}
           />
@@ -232,6 +249,7 @@ function QuestNav({ active }: Readonly<{ active: "dashboard" | "study" }>) {
         <Link className={active === "dashboard" ? "active" : ""} href="/dashboard">Quest Map</Link>
         <Link href="/plan">Plan</Link>
         <Link className={active === "study" ? "active" : ""} href="/study">Arena</Link>
+        <Link href="/quiz">Quiz</Link>
         <Link href="/profile">Profile</Link>
       </nav>
       <Link className="quest-primary-action" href="/study">Continue Quest</Link>

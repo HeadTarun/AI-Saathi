@@ -82,7 +82,14 @@ export default function ProfilePage() {
     setError("");
     try {
       const authProfile = await getCurrentAuthProfile();
-      const userId = authProfile?.userId ?? currentProfile.userId;
+      const googleUserId = !authProfile && currentProfile.userId.startsWith("google-") ? currentProfile.userId : "";
+
+      if (!authProfile && !googleUserId) {
+        window.location.href = "/login?next=/profile";
+        return;
+      }
+
+      const userId = authProfile?.userId || googleUserId;
       const [profileData, progressData, planData] = await Promise.all([
         getSupabaseProfile(userId).catch(() => null),
         getProgress(userId),
@@ -92,7 +99,8 @@ export default function ProfilePage() {
         const nextProfile: LearnerProfile = {
           ...currentProfile,
           userId: profileData.user.id,
-          name: profileData.user.name || currentProfile.name,
+          name: profileData.user.name || authProfile?.name || currentProfile.name,
+          email: profileData.user.email || authProfile?.email || currentProfile.email,
           level: LEVELS.includes(profileData.user.level as LearnerProfile["level"])
             ? (profileData.user.level as LearnerProfile["level"])
             : currentProfile.level,
